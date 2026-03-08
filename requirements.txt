@@ -1,0 +1,9 @@
+customtkinter
+Pillow
+ImageHash
+send2trash
+opencv-python
+numpy
+imageio-ffmpeg
+winshell
+pypiwin32
