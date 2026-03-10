@@ -476,3 +476,37 @@ class TestPipelineIntegration:
         result = detect_duplicates(hash_map, hash_tolerance=0)
         # 3 different colored images should not be duplicates
         assert result.duplicate_group_count == 0
+class TestDetectorCategories:
+    def test_full_scan_populates_all_categories(self):
+        # Mock data representing different types of files
+        hash_map = {
+            "C:/photos/dup1.jpg": {"hash": "h1", "size": 1000, "resolution": (100, 100), "blur_score": 50},
+            "C:/photos/dup2.jpg": {"hash": "h1", "size": 950, "resolution": (100, 100), "blur_score": 60},
+            "C:/photos/screenshot.png": {"hash": "h2", "size": 2000, "resolution": (200, 200), "blur_score": 200},
+            "C:/photos/wa_img.jpg": {"hash": "h3", "size": 3000, "resolution": (300, 300), "blur_score": 300},
+            "C:/photos/large.jpg": {"hash": "h4", "size": 60 * 1024 * 1024, "resolution": (4000, 4000), "blur_score": 400},
+        }
+        
+        all_images = [
+            ScanFile(path="C:/photos/dup1.jpg", size_bytes=1000, extension=".jpg", filename="dup1.jpg"),
+            ScanFile(path="C:/photos/dup2.jpg", size_bytes=950, extension=".jpg", filename="dup2.jpg"),
+            ScanFile(path="C:/photos/screenshot.png", size_bytes=2000, extension=".png", filename="Screenshot_1.png"), # trigger screenshot
+            ScanFile(path="C:/photos/wa_img.jpg", size_bytes=3000, extension=".jpg", filename="IMG-WA0001.jpg"), # trigger whatsapp
+            ScanFile(path="C:/photos/large.jpg", size_bytes=60 * 1024 * 1024, extension=".jpg", filename="large.jpg"), # trigger large
+        ]
+        
+        # Test "full" mode
+        result = detect_duplicates(hash_map, hash_tolerance=0, all_images=all_images, mode="full")
+        
+        assert result.duplicate_group_count == 1
+        assert len(result.screenshots) == 1
+        assert len(result.whatsapp_media) == 1
+        assert len(result.large_files) == 1
+        assert len(result.blurry_photos) == 2 # dup1 and dup2 have blur_score < 100
+        
+        # Test "photos" mode alias
+        result_alias = detect_duplicates(hash_map, hash_tolerance=0, all_images=all_images, mode="photos")
+        assert result_alias.duplicate_group_count == 1
+        assert len(result_alias.screenshots) == 1
+        assert len(result_alias.whatsapp_media) == 1
+        assert len(result_alias.blurry_photos) == 2

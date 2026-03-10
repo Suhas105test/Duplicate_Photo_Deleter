@@ -59,9 +59,11 @@ def delete_files(paths: List[str]) -> DeleteResult:
     """
     deleted = []
     failed = []
-    for path in paths:
-        try:
-            # send2trash on Windows can fail with mixed slashes or long path prefixes
+    try:
+        # send2trash on Windows can fail with mixed slashes or long path prefixes
+        # Batch paths safely
+        norm_paths = []
+        for path in paths:
             norm_path = os.path.normpath(path)
             
             # Windows API (SHFileOperation) used by send2trash doesn't support extended paths
@@ -69,18 +71,29 @@ def delete_files(paths: List[str]) -> DeleteResult:
                 norm_path = "\\" + norm_path[7:]
             elif norm_path.startswith("\\\\?\\"):
                 norm_path = norm_path[4:]
-                
-            send2trash(norm_path)
-            deleted.append(path)
-            log.info("Deleted (recycled): %s", norm_path)
-        except OSError as e:
-            log.error("Failed to delete %s: %s", path, e)
-            failed.append((path, str(e)))
-        except Exception as e:
-            # Catch send2trash-specific non-OSError exceptions
-            log.error("Unexpected error deleting %s: %s", path, e, exc_info=True)
-            failed.append((path, str(e)))
+            norm_paths.append(norm_path)
             
+        send2trash(norm_paths)
+        deleted.extend(paths)
+        log.info("Deleted (recycled) %d file(s) in batch", len(paths))
+    except Exception as e:
+        log.error("Bulk delete failed, falling back to sequential deletion: %s", e)
+        # Fallback to one-by-one
+        for path in paths:
+            try:
+                norm_path = os.path.normpath(path)
+                if norm_path.startswith(r"\\?\UNC\\"):
+                    norm_path = "\\" + norm_path[7:]
+                elif norm_path.startswith("\\\\?\\"):
+                    norm_path = norm_path[4:]
+                send2trash(norm_path)
+                deleted.append(path)
+                log.info("Deleted (recycled): %s", norm_path)
+            except Exception as ex:
+                log.error("Failed to delete %s: %s", path, ex)
+                failed.append((path, str(ex)))
+            
+
     if deleted:
         global _undo_stack
         _undo_stack.append(deleted.copy())
@@ -139,8 +152,11 @@ def restore_last_deleted() -> DeleteResult:
             if path not in restored:
                 failed.append((path, f"Recycle Bin API Error: {str(e)}"))
     finally:
-        # Clean up COM
-        pythoncom.CoUninitialize()
+        # Clean up COM, avoiding exceptions if uninit fails
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
     
     log.info("Restore complete: %d succeeded, %d failed", len(restored), len(failed))
     return DeleteResult(deleted=restored, failed=failed)

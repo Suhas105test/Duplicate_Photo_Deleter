@@ -497,8 +497,8 @@ def detect_duplicates(
     )
 
     # Determine what to detect based on mode
-    do_metadata = mode in ["full", "screenshots", "blurry", "large", "messages", "timeline"]
-    do_duplicates = mode in ["full", "duplicates", "similar"]
+    do_metadata = mode in ["full", "photos", "screenshots", "blurry", "large", "messages", "timeline"]
+    do_duplicates = mode in ["full", "photos", "duplicates", "similar"]
 
     # OPTIMIZATION: For metadata-only modes, skip the expensive hash_map processing entirely
     # and only work with the all_images pre-computed metadata
@@ -507,35 +507,34 @@ def detect_duplicates(
         if all_images:
             timeline = defaultdict(list)
             for img in all_images:
-                if mode in ["timeline", "blurry", "large", "screenshots", "messages"]:
+                if do_metadata:
                     try:
                         year = time.localtime(img.timestamp).tm_year
                         timeline[year].append(img.path)
                     except (ValueError, OSError):
                         pass
                 
-                if mode == "screenshots" or mode in ["full"]:
-                    if img.is_screenshot:
-                        result.screenshots.append(img.path)
+                if (mode == "screenshots" or mode in ["full", "photos"]) and img.is_screenshot:
+                    result.screenshots.append(img.path)
                 
-                if mode == "messages" or mode in ["full"]:
+                if (mode == "messages" or mode in ["full", "photos"]):
                     if img.is_whatsapp:
                         result.whatsapp_media.append(img.path)
                     elif img.is_telegram:
                         result.telegram_media.append(img.path)
                 
-                if mode == "large" or mode in ["full"]:
+                if (mode == "large" or mode in ["full", "photos"]):
                     if img.size_bytes > 50 * 1024 * 1024:
                         result.large_files.append(img.path)
                 
-                if mode == "blurry" or mode in ["full"]:
+                if (mode == "blurry" or mode in ["full", "photos"]):
                     meta = hash_map.get(img.path)
                     if meta:
                         blur = meta.get("blur_score", 999)
                         if blur < 100:
                             result.blurry_photos.append(img.path)
             
-            if mode in ["timeline", "full"]:
+            if mode in ["timeline", "full", "photos"]:
                 result.timeline = {y: timeline[y] for y in sorted(timeline.keys(), reverse=True)}
         
         result.groups = []
@@ -557,7 +556,7 @@ def detect_duplicates(
         timeline = defaultdict(list)
         for img in all_images:
             # 1. Timeline
-            if mode in ["full", "timeline"]:
+            if mode in ["full", "photos", "timeline"]:
                 try:
                     year = time.localtime(img.timestamp).tm_year
                     timeline[year].append(img.path)
@@ -565,21 +564,21 @@ def detect_duplicates(
                     pass
             
             # 2. Categories
-            if mode in ["full", "screenshots"] and img.is_screenshot:
+            if mode in ["full", "photos", "screenshots"] and img.is_screenshot:
                 result.screenshots.append(img.path)
             
-            if mode in ["full", "messages"]:
+            if mode in ["full", "photos", "messages"]:
                 if img.is_whatsapp:
                     result.whatsapp_media.append(img.path)
                 elif img.is_telegram:
                     result.telegram_media.append(img.path)
                 
             # Large files (> 50MB)
-            if mode in ["full", "large"] and img.size_bytes > 50 * 1024 * 1024:
+            if mode in ["full", "photos", "large"] and img.size_bytes > 50 * 1024 * 1024:
                 result.large_files.append(img.path)
                 
             # Blurry (based on blur_score if available from hashing stage)
-            if mode in ["full", "blurry"]:
+            if mode in ["full", "photos", "blurry"]:
                 meta = hash_map.get(img.path)
                 if meta:
                     blur = meta.get("blur_score", 999)
@@ -587,7 +586,7 @@ def detect_duplicates(
                         result.blurry_photos.append(img.path)
 
         # Convert to plain dict and sort years descending
-        if mode in ["full", "timeline"]:
+        if mode in ["full", "photos", "timeline"]:
             result.timeline = {y: timeline[y] for y in sorted(timeline.keys(), reverse=True)}
 
     # ── Phase A: groups from perceptual hashing ─────────────────────────────

@@ -9,6 +9,10 @@ A smart desktop application to scan directories and detect duplicate or similar 
 - Per-tab scan buttons with cached results to avoid unnecessary rescanning
 - Dashboard statistics automatically stay in sync after deletions
 - Improved stability for very large scans, and heatmap feature removed
+- **Media Compression**: Real-time progress bar when compressing large videos
+- **Bulk Deletion**: Optimized deletion logic for near-instant removal of thousands of files
+- **UI & Theme**: Adaptive light mode support and empty state highlight fixes
+- **Robustness**: Pinned dependencies and improved thread safety for file operations
 
 ## Installation
 

@@ -9,15 +9,19 @@ THUMBNAIL_SIZE = (118, 118)
 THUMBNAIL_SIZE_CTK = (118, 118)   # logical size for CTkImage
 
 # ─── Color Palette ───────────────────────────────────────────────────────────
-ACCENT      = "#3B82F6"
-DANGER      = "#EF4444"
-SUCCESS     = "#22C55E"
-WARN        = "#F59E0B"
-NEAR_DUP    = "#A78BFA"           # purple for near-duplicate badge
-EXACT_BYTE  = "#34D399"           # green for byte-exact badge
-BG_CARD     = "#1E293B"
-BG_DARK     = "#0F172A"
-BG_THUMB    = "#0D1829"
-WARM_ORANGE = "#F97316"
-TEXT_MUTED  = "#94A3B8"
-TEXT_DIM    = "#475569"
+# Format: (LightModeColor, DarkModeColor)
+ACCENT      = ("#2563EB", "#3B82F6") # Slightly deeper blue for light mode
+DANGER      = ("#DC2626", "#EF4444")
+SUCCESS     = ("#16A34A", "#22C55E")
+WARN        = ("#D97706", "#F59E0B")
+NEAR_DUP    = ("#8B5CF6", "#A78BFA")
+EXACT_BYTE  = ("#10B981", "#34D399")
+
+BG_DARK     = ("#F1F5F9", "#0F172A") # Slate 100 for light, Dark Blue for dark
+BG_CARD     = ("#FFFFFF", "#1E293B") # White for light, Slate 800 for dark
+BG_THUMB    = ("#E2E8F0", "#0D1829")
+
+WARM_ORANGE = ("#EA580C", "#F97316")
+TEXT_MUTED  = ("#64748B", "#94A3B8") # Slate 500 for light, Slate 400 for dark
+TEXT_DIM    = ("#94A3B8", "#475569")
+TEXT_BLACK  = ("#0F172A", "#F8FAFC") # Inverted for text

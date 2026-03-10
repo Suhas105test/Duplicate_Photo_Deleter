@@ -1,8 +1,11 @@
 import os
+from typing import Optional
 from tkinter import messagebox
 import customtkinter as ctk
 from PIL import Image
 from .constants import BG_DARK, BG_CARD, TEXT_MUTED, ACCENT, DANGER
+from .components.video_player import VideoPlayer
+
 
 
 class ImageViewer(ctk.CTkToplevel):
@@ -18,6 +21,7 @@ class ImageViewer(ctk.CTkToplevel):
 
         # IMPORTANT: keep a strong reference so GC doesn't destroy the image
         self._ctk_img = None
+        self.video_player: Optional[VideoPlayer] = None
 
         self.configure(fg_color=BG_DARK)
 
@@ -123,11 +127,21 @@ class ImageViewer(ctk.CTkToplevel):
         from folder_scanner import VIDEO_EXTENSIONS
         ext = os.path.splitext(path)[1].lower()
         
+        # Cleanup previous video player if it exists
+        if self.video_player:
+            self.video_player.stop()
+            self.video_player.destroy()
+            self.video_player = None
+
         if ext in VIDEO_EXTENSIONS:
             self._ctk_img = None
-            self.img_label.configure(image=None, text="🎥  Video File\n(Preview not supported)",
-                                     text_color=TEXT_MUTED)
+            self.img_label.grid_remove() # Hide image label
+            
+            self.video_player = VideoPlayer(self.img_frame, video_path=path, fg_color=BG_DARK)
+            self.video_player.grid(row=0, column=1, sticky="nsew")
             return
+        else:
+            self.img_label.grid() # Show image label
 
         try:
             img_pil = Image.open(path)
@@ -200,3 +214,8 @@ class ImageViewer(ctk.CTkToplevel):
         path = self.paths[self.index]
         if self.on_toggle_selection:
             self.on_toggle_selection(path, self.select_cb.get())
+
+    def destroy(self):
+        if self.video_player:
+            self.video_player.stop()
+        super().destroy()

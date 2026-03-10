@@ -1,7 +1,8 @@
 import os
 import subprocess
 import logging
-from typing import Optional, List
+import re
+from typing import Optional, List, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,16 @@ class CompressionResult:
     @property
     def saved_bytes(self) -> int:
         return max(0, self.original_size - self.compressed_size) if self.success else 0
+
+def _parse_time_to_seconds(time_str: str) -> float:
+    try:
+        parts = time_str.split(':')
+        if len(parts) == 3:
+            h, m, s = parts
+            return int(h) * 3600 + int(m) * 60 + float(s)
+    except Exception:
+        pass
+    return 0.0
 
 def _get_unique_path(base_path: str, suffix: str = "_compressed") -> str:
     path = Path(base_path)
@@ -69,7 +80,7 @@ def compress_image(file_path: str, quality: int = 85, in_place: bool = False) ->
             os.remove(temp_path)
         return CompressionResult(file_path, None, 0, 0, False, str(e))
 
-def compress_video(file_path: str, crf: int = 28, in_place: bool = False) -> CompressionResult:
+def compress_video(file_path: str, crf: int = 28, in_place: bool = False, progress_callback: Optional[Callable[[float], None]] = None) -> CompressionResult:
     """Compresses a video using FFmpeg with visually lossless CRF 28."""
     try:
         orig_size = os.path.getsize(file_path)
@@ -92,10 +103,38 @@ def compress_video(file_path: str, crf: int = 28, in_place: bool = False) -> Com
         ]
         
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=creationflags)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=creationflags, text=True, encoding='utf-8', errors='ignore')
+        
+        duration_secs = 0.0
+        err_output = []
+        
+        while True:
+            line = proc.stderr.readline()
+            if not line and proc.poll() is not None:
+                break
+            if not line:
+                continue
+                
+            err_output.append(line)
+            
+            # Extract duration once
+            if duration_secs == 0.0:
+                dur_match = re.search(r"Duration:\s*(\d{2}:\d{2}:\d{2}\.\d+)", line)
+                if dur_match:
+                    duration_secs = _parse_time_to_seconds(dur_match.group(1))
+            
+            # Extract current time progress
+            if progress_callback and duration_secs > 0:
+                time_match = re.search(r"time=(\d{2}:\d{2}:\d{2}\.\d+)", line)
+                if time_match:
+                    current_secs = _parse_time_to_seconds(time_match.group(1))
+                    progress = min(1.0, current_secs / duration_secs)
+                    progress_callback(progress)
+                    
+        proc.wait()
         
         if proc.returncode != 0:
-            err = proc.stderr.decode('utf-8', errors='ignore')
+            err = "".join(err_output)
             if os.path.exists(temp_path_mp4):
                 os.remove(temp_path_mp4)
             raise RuntimeError(f"FFmpeg failed: {err}")

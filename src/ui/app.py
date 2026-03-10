@@ -23,7 +23,7 @@ import compressor
 
 # Internal Modular Imports
 from .constants import (
-    BG_DARK, BG_CARD, ACCENT, DANGER, SUCCESS, WARN, TEXT_MUTED, TEXT_DIM, WARM_ORANGE, BG_THUMB
+    BG_DARK, BG_CARD, ACCENT, DANGER, SUCCESS, WARN, TEXT_MUTED, TEXT_DIM, WARM_ORANGE, BG_THUMB, TEXT_BLACK
 )
 from .models import ScanSettings
 from .thumbnail_cache import ThumbnailCache
@@ -136,10 +136,10 @@ class SmartPhotoCleanerApp(ctk.CTk):
             log.info("Sidebar created")
 
             self.nav_btns = {}
-            items = ["Dashboard", "Duplicates", "Screenshots", "Messages Media", "Similar Photos", "Blurry Photos", "Large Files", "Timeline Viewer", "Media Compressor", "Settings"]
+            items = ["Dashboard", "Duplicates", "Blurry Photos", "Screenshots", "Messages Media", "Similar Photos", "Timeline Viewer", "Large Files", "Media Compressor", "Settings"]
             for i, text in enumerate(items):
                 btn = ctk.CTkButton(
-                    self.sidebar_frame, text=text, fg_color="transparent", text_color="white",
+                    self.sidebar_frame, text=text, fg_color="transparent", text_color=TEXT_BLACK,
                     hover_color="#334155", anchor="w", command=lambda t=text: self.select_frame_by_name(t)
                 )
                 btn.grid(row=i+1, column=0, padx=10, pady=5, sticky="ew")
@@ -300,7 +300,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
     def _build_dashboard(self, parent):
         p = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12); p.pack(fill="x", pady=(0, 20))
         r = ctk.CTkFrame(p, fg_color="transparent"); r.pack(fill="x", padx=16, pady=16)
-        self._folder_entry = ctk.CTkEntry(r, placeholder_text="Select folder...", state="readonly"); self._folder_entry.pack(side="left", fill="x", expand=True)
+        self._folder_entry = ctk.CTkEntry(r, placeholder_text="Select folder...", state="readonly", border_width=2); self._folder_entry.pack(side="left", fill="x", expand=True)
         ctk.CTkButton(r, text="📁 Browse Folder", command=self._select_folder).pack(side="left", padx=8)
         ctk.CTkButton(r, text="📄 Select Files", fg_color="#334155", hover_color="#475569", command=self._select_files).pack(side="left", padx=(0, 4))
         
@@ -363,6 +363,8 @@ class SmartPhotoCleanerApp(ctk.CTk):
         val = ctk.CTkLabel(f, text=v, font=ctk.CTkFont(size=18, weight="bold")); val.pack(pady=(0, 8))
         return val
 
+        return val
+
     def _build_settings(self, parent):
         panel = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12)
 
@@ -372,7 +374,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
         # Prefilter toggle
         adv_row = ctk.CTkFrame(panel, fg_color="transparent")
         adv_row.pack(fill="x", padx=20, pady=(20, 0))
-        ctk.CTkLabel(adv_row, text="Advanced", font=ctk.CTkFont(size=12, weight="bold"), text_color="white").pack(side="left")
+        ctk.CTkLabel(adv_row, text="Advanced", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_BLACK).pack(side="left")
         ctk.CTkButton(adv_row, text="?", width=30, height=20, font=ctk.CTkFont(size=10), command=self._show_md5_help).pack(side="right")
         self._prefilter_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(
@@ -386,7 +388,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
         # File/Folder selection panel
         sel_panel = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12)
         sel_panel.pack(fill="x", pady=(0, 20), ipady=6)
-        ctk.CTkLabel(sel_panel, text="Select Media", font=ctk.CTkFont(size=12, weight="bold"), text_color="white").pack(anchor="w", padx=20, pady=(12, 8))
+        ctk.CTkLabel(sel_panel, text="Select Media", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_BLACK).pack(anchor="w", padx=20, pady=(12, 8))
         sel_row = ctk.CTkFrame(sel_panel, fg_color="transparent")
         sel_row.pack(fill="x", padx=20, pady=(0, 12))
         ctk.CTkButton(sel_row, text="📁 Select Folder", command=self._compressor_select_folder).pack(side="left", padx=(0, 8))
@@ -401,7 +403,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
 
         q_header = ctk.CTkFrame(panel, fg_color="transparent")
         q_header.pack(fill="x", padx=20, pady=(16, 0))
-        ctk.CTkLabel(q_header, text="Image Quality", font=ctk.CTkFont(size=12, weight="bold"), text_color="white").pack(side="left")
+        ctk.CTkLabel(q_header, text="Image Quality", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_BLACK).pack(side="left")
         ctk.CTkButton(q_header, text="?", width=24, height=24, font=ctk.CTkFont(size=10), command=self._show_image_quality_help).pack(side="right")
         ctk.CTkLabel(panel, text="JPEG quality (1–95). Lower = smaller file, more compression. 85 is recommended.", font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(anchor="w", padx=20)
         q_row = ctk.CTkFrame(panel, fg_color="transparent")
@@ -414,7 +416,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
 
         crf_header = ctk.CTkFrame(panel, fg_color="transparent")
         crf_header.pack(fill="x", padx=20, pady=(12, 0))
-        ctk.CTkLabel(crf_header, text="Video CRF (Constant Rate Factor)", font=ctk.CTkFont(size=12, weight="bold"), text_color="white").pack(side="left")
+        ctk.CTkLabel(crf_header, text="Video CRF (Constant Rate Factor)", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_BLACK).pack(side="left")
         ctk.CTkButton(crf_header, text="?", width=24, height=24, font=ctk.CTkFont(size=10), command=self._show_video_crf_help).pack(side="right")
         ctk.CTkLabel(panel, text="Lower CRF = better quality, larger file. 28 is visually near-lossless.", font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(anchor="w", padx=20)
         crf_row = ctk.CTkFrame(panel, fg_color="transparent")
@@ -437,7 +439,8 @@ class SmartPhotoCleanerApp(ctk.CTk):
         # Action + output area
         btn_row = ctk.CTkFrame(parent, fg_color="transparent")
         btn_row.pack(fill="x", pady=(0, 10))
-        ctk.CTkButton(btn_row, text="🗜 Compress Selected Files", height=44, font=ctk.CTkFont(size=14, weight="bold"), fg_color="#0EA5E9", hover_color="#0284C7", command=self._compress_selected).pack(side="left")
+        self._comp_btn = ctk.CTkButton(btn_row, text="🗜 Compress Selected Files", height=44, font=ctk.CTkFont(size=14, weight="bold"), fg_color="#0EA5E9", hover_color="#0284C7", command=self._compress_selected)
+        self._comp_btn.pack(side="left")
 
         self._compress_output = ctk.CTkScrollableFrame(parent, fg_color=BG_CARD, corner_radius=12, height=200)
         self._compress_output.pack(fill="both", expand=True, pady=(8, 0))
@@ -449,32 +452,30 @@ class SmartPhotoCleanerApp(ctk.CTk):
         if f:
             self._folder_path = f
             self._selected_files_list = None  # Clear any file selection
-            self._folder_entry.configure(state="normal"); self._folder_entry.delete(0, "end"); self._folder_entry.insert(0, f); self._folder_entry.configure(state="readonly")
+            self._folder_entry.configure(state="normal"); self._folder_entry.delete(0, "end"); self._folder_entry.insert(0, f); self._folder_entry.configure(state="readonly", border_color=("gray70", "gray30")) # Reset border
             self._scan_btn.configure(state="normal"); self._scan_videos_btn.configure(state="normal")
 
     def _select_files(self):
         files = filedialog.askopenfilenames(
-            title="Select files to scan",
-            filetypes=[
-                ("Image & Video files", "*.jpg *.jpeg *.png *.gif *.bmp *.heic *.webp *.mp4 *.mov *.avi *.mkv *.pdf *.txt"),
-                ("All files", "*.*")
-            ]
+            title="Select Photos/Videos",
+            filetypes=[("Media Files", "*.jpg *.jpeg *.png *.heic *.mp4 *.mov *.mkv *.avi *.webp *.gif")]
         )
         if files:
             self._selected_files_list = list(files)
+            self._folder_path = None
             self._folder_entry.configure(
                 state="normal"
             )
             self._folder_entry.delete(0, "end")
-            self._folder_entry.insert(0, f"{len(files)} file(s) selected")
-            self._folder_entry.configure(state="readonly")
+            self._folder_entry.insert(0, f"{len(files)} files selected")
+            self._folder_entry.configure(state="readonly", border_color=("gray70", "gray30")) # Reset border
             self._scan_btn.configure(state="normal")
             self._scan_videos_btn.configure(state="normal")
 
-    def _start_photo_scan(self): self._start_scan("photos")
+    def _start_photo_scan(self): self._start_scan("full")
     def _start_video_scan(self): self._start_scan("videos")
     
-    def _scan_from_tab(self, tab_name: str, mode: str = "photos"):
+    def _scan_from_tab(self, tab_name: str, mode: str = "full"):
         """Initiate a scan requested from a specific tab.
         
         Always performs a scan to show progress and update timing/stats.
@@ -484,13 +485,15 @@ class SmartPhotoCleanerApp(ctk.CTk):
         self.select_frame_by_name("Dashboard")
         self._start_scan(mode)
 
-    def _start_scan(self, mode):
+    def _start_scan(self, mode: str):
         # Validation: Ensure folder or files are selected
         if not self._folder_path and not self._selected_files_list:
+            self._folder_entry.configure(border_color=DANGER)
             messagebox.showwarning("No Input", "Please select a folder or files before starting the scan.")
             return
 
-        # mode = "photos" or "videos"; called by dashboard or feature tabs
+        # mode = "full" (all images/docs/metadata) or "videos" (videos only)
+        # called by dashboard or feature tabs
         self._scan_start_time = time.perf_counter()
         self._start_elapsed_timer()
         self._last_count = 0
@@ -1076,6 +1079,8 @@ class SmartPhotoCleanerApp(ctk.CTk):
         self._exact_group_cards.clear()
         for w in self._scroll_similar.winfo_children(): w.destroy()
         self._similar_group_cards.clear()
+        for card in self._timeline_cards: card.destroy()
+        self._timeline_cards.clear()
 
         # Clear categorization tabs
         for scroll, cards in [
@@ -1417,15 +1422,25 @@ class SmartPhotoCleanerApp(ctk.CTk):
         for w in self._compress_output.winfo_children(): w.destroy()
         ctk.CTkLabel(self._compress_output, text=f"Compressing {len(image_paths)} image(s) and {len(video_paths)} video(s)...", text_color=TEXT_MUTED).pack(pady=8)
 
+        progress_bar = ctk.CTkProgressBar(self._compress_output, width=300)
+        progress_bar.pack(pady=10)
+        progress_bar.set(0)
+
         start_time = time.perf_counter()
+        
+        def _update_progress(p: float):
+            self.after(0, lambda: progress_bar.set(p))
+            
         def _do_compress():
             results = []
             for p in image_paths:
                 res = compressor.compress_image(p, quality=quality, in_place=in_place)
                 results.append(res)
             for p in video_paths:
-                res = compressor.compress_video(p, crf=crf, in_place=in_place)
+                res = compressor.compress_video(p, crf=crf, in_place=in_place, progress_callback=_update_progress)
                 results.append(res)
+                # Reset progress for the next video if any
+                _update_progress(0)
             
             duration = time.perf_counter() - start_time
             self.after(0, lambda: self._show_compress_results(results, duration))

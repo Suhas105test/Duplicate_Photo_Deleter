@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Callable
 import customtkinter as ctk
 from PIL import Image
+import cv2
+import numpy as np
 from .constants import THUMBNAIL_SIZE, THUMBNAIL_SIZE_CTK
 from .disk_cache import DiskCache
 
@@ -53,7 +55,33 @@ class ThumbnailCache:
                 return
 
             # 2. Generate if not cached
-            img_pil = Image.open(path)
+            ext = os.path.splitext(path)[1].lower()
+            from folder_scanner import VIDEO_EXTENSIONS
+            
+            if ext in VIDEO_EXTENSIONS:
+                # Video handling: extract frame with OpenCV
+                cap = cv2.VideoCapture(path)
+                if not cap.isOpened():
+                    raise Exception("Could not open video file")
+                
+                # Try to grab frame at 1 second or first frame
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                if fps > 0:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps))
+                
+                ret, frame = cap.read()
+                cap.release()
+                
+                if not ret:
+                    raise Exception("Could not read frame from video")
+                
+                # Convert BGR (OpenCV) to RGB (PIL)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img_pil = Image.fromarray(frame_rgb)
+            else:
+                # Standard image handling
+                img_pil = Image.open(path)
+
             img_pil.thumbnail(THUMBNAIL_SIZE)
             
             # Save to disk cache for next time
