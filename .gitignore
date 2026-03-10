@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.cache/
+venv/
+.venv/
+env/
+.env/
+
+# App related
+smart_photo_cleaner.log
+.cache/thumbnails/
+
+# Build artifacts
+build/
+dist/
+*.spec
+ExeFile/
+
+# IDEs
+.vscode/
+.idea/
