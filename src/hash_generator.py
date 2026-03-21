@@ -108,7 +108,9 @@ def _compute_hash_worker(
             except Exception as video_exc:
                 try: cap.release()
                 except: pass
-                return (file_path, None, None, file_size, None, None, f"Video error: {str(video_exc)}")
+                # If video is extremely short or corrupted, use file size + name as a fallback hash
+                # so we can still catch exact duplicates even if OpenCV fails.
+                return (file_path, f"video-fallback-{file_size}", (0,0), file_size, 0.0, 127.0, f"Video error: {str(video_exc)}")
         else:
             # IMAGE OPTIMIZATION: Use OpenCV for reading and resizing
             # This is much faster than PIL for initial decoding when we only need a thumb
@@ -243,10 +245,11 @@ def find_exact_byte_duplicates(
     md5_map: dict[str, str] = {}          # path → md5
 
     chunk = max(1, total // (workers * 4))
-    with Pool(processes=workers) as pool:
-        for path, md5 in pool.imap_unordered(
-            _compute_md5_worker, files_needing_md5, chunksize=chunk
-        ):
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_compute_md5_worker, p) for p in files_needing_md5]
+        for future in as_completed(futures):
+            path, md5 = future.result()
             done += 1
             if md5 is not None:
                 md5_map[path] = md5
@@ -355,14 +358,18 @@ def generate_hashes(
             progress_callback(total_done, total)
             last_reported = total_done
 
-    pool = Pool(processes=workers)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    pool = ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="HashWorker"
+    )
     try:
         # Process Media (Images/Videos)
         computed_count = 0
         if remaining_media:
-            for file_path, phash_str, resolution, file_size, blur_score, brightness, error_msg in pool.imap_unordered(
-                _compute_hash_worker, remaining_media, chunksize=chunk
-            ):
+            futures = [pool.submit(_compute_hash_worker, p) for p in remaining_media]
+            for future in as_completed(futures):
+                file_path, phash_str, resolution, file_size, blur_score, brightness, error_msg = future.result()
                 if cancel_event and cancel_event.is_set(): break
                 computed_count += 1
                 safe_progress_callback(computed_count)
@@ -383,9 +390,9 @@ def generate_hashes(
 
         # Process Text Files
         if remaining_text:
-            for file_path, fprint, fsize, error_msg in pool.imap_unordered(
-                _compute_text_hash_worker, remaining_text, chunksize=chunk
-            ):
+            futures = [pool.submit(_compute_text_hash_worker, p) for p in remaining_text]
+            for future in as_completed(futures):
+                file_path, fprint, fsize, error_msg = future.result()
                 if cancel_event and cancel_event.is_set(): break
                 computed_count += 1
                 safe_progress_callback(computed_count)
@@ -402,8 +409,7 @@ def generate_hashes(
                     failed_count += 1
                 if computed_count % batch_size == 0: gc.collect()
     finally:
-        pool.terminate()
-        pool.join()
+        pool.shutdown(wait=False)
         cache.save()
 
     if failed_count > 0:

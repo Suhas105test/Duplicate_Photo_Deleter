@@ -381,8 +381,16 @@ def _group_fuzzy_bktree(
     tree = BKTree()
 
     for path in paths:
-        h = hash_ints[path]
-        neighbours = tree.search(h, tolerance)
+        h_str = hash_map[path]["hash"]
+        h = _hex_to_int(h_str)
+        
+        # Scale tolerance for videos (longer hashes)
+        current_tol = tolerance
+        if len(h_str) > 16: # Video hashes are 48 chars (3 * 16 hex)
+            # Scale proportionally: 64 bits -> tol, 192 bits -> tol * 3
+            current_tol = int(tolerance * (len(h_str) / 16))
+            
+        neighbours = tree.search(h, current_tol)
         for _dist, neighbour_path in neighbours:
             uf.union(path, neighbour_path)
         tree.insert(h, path)
@@ -487,10 +495,11 @@ def detect_duplicates(
         DetectionResult with all groups sorted by size (largest first).
     """
     t0 = time.perf_counter()
+    # Source of truth for total count is all_images (the full scanner output)
+    image_count = len(all_images) if all_images is not None else (len(hash_map) + sum(len(g) for g in (exact_byte_dupes or [])))
+    
     result = DetectionResult(
-        total_images_checked=len(hash_map) + sum(
-            len(g) for g in (exact_byte_dupes or [])
-        ),
+        total_images_checked=image_count,
         prefilter_exact_count=sum(len(g) for g in (exact_byte_dupes or [])),
         phash_candidates_count=len(hash_map),
         folder_sizes=folder_sizes or {},

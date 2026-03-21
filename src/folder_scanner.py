@@ -23,7 +23,7 @@ from typing import Generator
 
 log = logging.getLogger(__name__)
 
-IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic"})
+IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".arw", ".cr2", ".nef", ".dng", ".tif", ".tiff", ".raw"})
 VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv"})
 TEXT_EXTENSIONS = frozenset({".txt", ".csv", ".rtf"})
 DOC_EXTENSIONS = frozenset({".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"})
@@ -123,12 +123,12 @@ class ScanResult:
         if self._size_groups_cache is not None:
             return self._size_groups_cache
 
-        buckets: dict[int, list[str]] = defaultdict(list)
+        buckets: defaultdict[int, list[str]] = defaultdict(list)
         for img in self.images:
             buckets[img.size_bytes].append(img.path)
         
-        # Convert defaultdict to plain dict and cache it
-        res: dict[int, list[str]] = dict(buckets)
+        # Convert to plain dict and cache it
+        res = dict(buckets)
         self._size_groups_cache = res
         return res
 

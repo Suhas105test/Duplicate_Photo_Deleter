@@ -27,6 +27,7 @@ class DuplicateGroupCard(ctk.CTkFrame):
         self.on_selection_change = on_selection_change
         self._checkboxes: dict[str, ctk.CTkCheckBox] = {}
         self._img_labels: dict[str, ctk.CTkLabel] = {}
+        self._res_labels: dict[str, ctk.CTkLabel] = {}
         self._thumb_cards: dict[str, ctk.CTkFrame] = {}
         self._thumb_row = 0
         self._thumb_col = 0
@@ -111,8 +112,10 @@ class DuplicateGroupCard(ctk.CTkFrame):
 
         # Resolution label
         res = self.group.resolutions.get(path, (0, 0))
-        res_text = f"{res[0]}x{res[1]}" if res[0] > 0 else "Unknown resolution"
-        ctk.CTkLabel(card, text=res_text, font=ctk.CTkFont(size=10), text_color=TEXT_DIM).pack(pady=(0, 2))
+        res_text = f"{res[0]}x{res[1]}" if res[0] > 0 else "Checking resolution..."
+        res_label = ctk.CTkLabel(card, text=res_text, font=ctk.CTkFont(size=10), text_color=TEXT_DIM)
+        res_label.pack(pady=(0, 2))
+        self._res_labels[path] = res_label
 
         # Bottom row: Checkbox + filename
         bot = ctk.CTkFrame(card, fg_color="transparent")
@@ -141,22 +144,28 @@ class DuplicateGroupCard(ctk.CTkFrame):
         """Triggers thumbnail loading for all images in this card."""
         for path, label in self._img_labels.items():
             # If already loading or loaded, ThumbnailCache handles it
+            res_label = self._res_labels.get(path)
             img = self.thumb_cache.get_or_schedule(path, self._on_thumb_ready)
             if img:
-                self._update_label(label, img)
+                self._update_label(label, img, None, res_label)
 
-    def _on_thumb_ready(self, path: str, ctk_img: Optional[ctk.CTkImage]):
+    def _on_thumb_ready(self, path: str, ctk_img: Optional[ctk.CTkImage], resolution: Optional[tuple[int, int]] = None):
         """Callback from ThumbnailCache on background thread."""
         if path in self._img_labels:
             label = self._img_labels[path]
+            res_label = self._res_labels.get(path)
             # Ensure UI update happens on the main thread
-            self.after(0, lambda: self._update_label(label, ctk_img))
+            self.after(0, lambda: self._update_label(label, ctk_img, resolution, res_label))
 
-    def _update_label(self, label: ctk.CTkLabel, ctk_img: Optional[ctk.CTkImage]):
+    def _update_label(self, label: ctk.CTkLabel, ctk_img: Optional[ctk.CTkImage], resolution: Optional[tuple[int, int]] = None, res_label: Optional[ctk.CTkLabel] = None):
         if ctk_img:
             label.configure(image=ctk_img, text="")
+            if resolution and res_label:
+                res_label.configure(text=f"{resolution[0]}x{resolution[1]}")
         else:
             label.configure(text="❌")
+            if res_label:
+                res_label.configure(text="Error loading")
 
     def _select_all(self):
         for cb in self._checkboxes.values():

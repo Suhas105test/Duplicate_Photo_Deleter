@@ -15,11 +15,14 @@ log = logging.getLogger(__name__)
 class ThumbnailCache:
     """LRU thumbnail cache with persistent disk-based caching."""
     
-    def __init__(self, max_size: int = 400, num_threads: int = 8):
+    def __init__(self, max_size: int = 200, num_threads: int = 4):
         self.max_size = max_size
         self._cache: OrderedDict[str, ctk.CTkImage] = OrderedDict()
         self._pending: dict[str, list[Callable]] = {}
-        self._executor = ThreadPoolExecutor(max_workers=num_threads)
+        self._executor = ThreadPoolExecutor(
+            max_workers=num_threads,
+            thread_name_prefix="ThumbWorker"
+        )
         self.disk_cache = DiskCache()
 
     def get_or_schedule(self, path: str, on_ready: Callable):
@@ -47,12 +50,15 @@ class ThumbnailCache:
             # 1. Try Disk Cache
             cached_path = self.disk_cache.get(path)
             if cached_path:
-                img_pil = Image.open(cached_path)
-                # Ensure it's the right size in case constants changed
-                img_pil.thumbnail(THUMBNAIL_SIZE)
-                ctk_img = ctk.CTkImage(img_pil, size=THUMBNAIL_SIZE_CTK)
-                self._store(path, ctk_img)
-                return
+                with Image.open(cached_path) as img_pil:
+                    # Ensure it's the right size in case constants changed
+                    img_pil.thumbnail(THUMBNAIL_SIZE)
+                    ctk_img = ctk.CTkImage(img_pil, size=THUMBNAIL_SIZE_CTK)
+                    # We don't have the original resolution from the cached thumbnail easily,
+                    # but we can skip it for cache hits or store it in a sidecar.
+                    # For now, we'll focus on the generation pass.
+                    self._store(path, ctk_img)
+                    return
 
             # 2. Generate if not cached
             ext = os.path.splitext(path)[1].lower()
@@ -80,7 +86,31 @@ class ThumbnailCache:
                 img_pil = Image.fromarray(frame_rgb)
             else:
                 # Standard image handling
-                img_pil = Image.open(path)
+                try:
+                    with Image.open(path) as img_temp:
+                        original_res = img_temp.size
+                        img_pil = img_temp.copy()
+                except Exception as img_err:
+                    log.debug("PIL failed for %s, trying OpenCV: %s", path, img_err)
+                    # Fallback to OpenCV for formats PIL doesn't support well (some RAWs)
+                    frame = cv2.imread(path)
+                    if frame is not None:
+                        # OpenCV is BGR
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        img_pil = Image.fromarray(frame_rgb)
+                        original_res = (frame.shape[1], frame.shape[0])
+                    else:
+                        # Second fallback: maybe it's a video/RAW format OpenCV handles via VideoCapture
+                        cap = cv2.VideoCapture(path)
+                        ret, frame = cap.read()
+                        if ret:
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            img_pil = Image.fromarray(frame_rgb)
+                            original_res = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+                            cap.release()
+                        else:
+                            cap.release()
+                            raise img_err
 
             img_pil.thumbnail(THUMBNAIL_SIZE)
             
@@ -88,12 +118,12 @@ class ThumbnailCache:
             self.disk_cache.save(path, img_pil)
             
             ctk_img = ctk.CTkImage(img_pil, size=THUMBNAIL_SIZE_CTK)
-            self._store(path, ctk_img)
+            self._store(path, ctk_img, resolution=original_res)
         except Exception as e:
             log.warning("Failed to load thumbnail for %s: %s", path, e)
-            self._store(path, None)
+            self._store(path, None, None)
 
-    def _store(self, path: str, image: Optional[ctk.CTkImage]):
+    def _store(self, path: str, image: Optional[ctk.CTkImage], resolution: Optional[tuple[int, int]] = None):
         if image:
             self._cache[path] = image
             if len(self._cache) > self.max_size:
@@ -102,6 +132,12 @@ class ThumbnailCache:
         callbacks = self._pending.pop(path, [])
         for cb in callbacks:
             try:
-                cb(path, image)
+                # Support both 2 and 3 argument callbacks for backward compat
+                import inspect
+                sig = inspect.signature(cb)
+                if len(sig.parameters) >= 3:
+                    cb(path, image, resolution)
+                else:
+                    cb(path, image)
             except Exception:
                 pass

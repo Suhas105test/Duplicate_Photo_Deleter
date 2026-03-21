@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import sys
 
 from ui import launch
@@ -25,6 +26,7 @@ def _configure_logging():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     _configure_logging()
     log = logging.getLogger("main")
     log.info("Smart Photo Cleaner starting")

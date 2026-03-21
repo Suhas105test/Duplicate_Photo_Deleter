@@ -109,9 +109,15 @@ class SmartPhotoCleanerApp(ctk.CTk):
         log.info("SmartPhotoCleanerApp initialization complete!")
 
     def _on_close(self):
+        log.info("Closing application...")
         self._cancel_event.set()
-        self._thumb_cache.shutdown()
+        if hasattr(self, "_thumb_cache"):
+            self._thumb_cache.shutdown()
+        self.quit()
         self.destroy()
+        # Failsafe to ensure process dies
+        import os
+        os._exit(0)
 
     def _build_layout(self):
         log = logging.getLogger("ui.app._build_layout")
@@ -208,6 +214,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
 
         # keep track of tab-specific scan buttons so we can enable/disable them
         self._tab_scan_buttons: list[ctk.CTkButton] = []
+        self._tab_count_labels: dict[str, ctk.CTkLabel] = {}
         for name, attr in [("Duplicates", "_scroll_exact"), ("Screenshots", "_scroll_screenshots"), ("Messages Media", "_scroll_messages"), ("Similar Photos", "_scroll_similar"), ("Blurry Photos", "_scroll_blurry"), ("Large Files", "_scroll_large"), ("Timeline Viewer", "_scroll_timeline")]:
             f = ctk.CTkFrame(self.main_container, fg_color="transparent")
             self.frames[name] = f
@@ -215,6 +222,9 @@ class SmartPhotoCleanerApp(ctk.CTk):
             header = ctk.CTkFrame(f, fg_color="transparent")
             header.pack(fill="x", pady=(10, 20))
             ctk.CTkLabel(header, text=name, font=ctk.CTkFont(size=24, weight="bold")).pack(side="left", anchor="w")
+            count_lbl = ctk.CTkLabel(header, text="", font=ctk.CTkFont(size=14, weight="bold"), text_color=TEXT_MUTED)
+            count_lbl.pack(side="left", padx=(12, 0), anchor="s", pady=(0, 4))
+            self._tab_count_labels[name] = count_lbl
             info_btn = ctk.CTkButton(header, text="ℹ", width=30, height=30, command=lambda n=name: self._show_tab_info(n))
             info_btn.pack(side="right", padx=(10, 0))
             # each feature tab gets its own scan/refresh button
@@ -492,6 +502,27 @@ class SmartPhotoCleanerApp(ctk.CTk):
             messagebox.showwarning("No Input", "Please select a folder or files before starting the scan.")
             return
 
+        # NEW: Instant re-detection if we already have hashes and only tolerance changed
+        if mode == "similar" and hasattr(self, "_last_h_map") and self._last_h_map:
+            log.info("Performing instant re-detection based on existing hashes...")
+            self._set_scanning_ui(True)
+            self._set_status("Updating similarity results...", SUCCESS)
+            
+            def _quick_detect():
+                t0 = time.perf_counter()
+                det = detect_duplicates(
+                    self._last_h_map, 
+                    hash_tolerance=self._settings.tolerance,
+                    exact_byte_dupes=self._last_exact_groups,
+                    all_images=self._detection_result.all_images if self._detection_result else [],
+                    folder_sizes=self._detection_result.folder_sizes if self._detection_result else {},
+                    mode="similar"
+                )
+                self.after(0, lambda: self._push_done(det))
+                
+            threading.Thread(target=_quick_detect, daemon=True).start()
+            return
+
         # mode = "full" (all images/docs/metadata) or "videos" (videos only)
         # called by dashboard or feature tabs
         self._scan_start_time = time.perf_counter()
@@ -500,11 +531,14 @@ class SmartPhotoCleanerApp(ctk.CTk):
         self._is_scanning = True; self._is_paused = False
         self._cancel_event.clear(); self._pause_event.set()
         self._clear_results(); self._set_scanning_ui(True)
-        self._scan_duration_label.configure(text="In-Progress")
+        self._scan_duration_label.configure(text="")
         s = ScanSettings(); s.tolerance = self._settings.tolerance; s.use_prefilter = self._prefilter_var.get()
         s.mode = mode
-        if mode == "videos": s.target_extensions = VIDEO_EXTENSIONS; s.use_prefilter = False
-        else: s.target_extensions = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
+        if mode == "videos": 
+            s.target_extensions = VIDEO_EXTENSIONS
+            s.use_prefilter = True  # FIX: Enable MD5 for videos too!
+        else: 
+            s.target_extensions = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
         threading.Thread(target=self._scan_worker, args=(s,), daemon=True).start()
 
     def _pause_resume_scan(self):
@@ -560,7 +594,15 @@ class SmartPhotoCleanerApp(ctk.CTk):
             # 2. Hashing (Images, Videos, and Documents)
             self._push("status", "Preparing for hashing...", 0.2, False, "")
             
-            all_files_to_hash = [f.path for f in res.images]
+            exact_groups = []
+            if settings.use_prefilter:
+                self._push("status", "Pre-filtering exact duplicates...", 0.18, False, "")
+                exact_groups, all_files_to_hash = find_exact_byte_duplicates(res.size_candidate_groups)
+                # CRITICAL FIX: To find near-duplicates of exact files, we MUST hash at least one member of each exact group
+                for group in exact_groups:
+                    if group: all_files_to_hash.append(group[0])
+            else:
+                all_files_to_hash = [f.path for f in res.images]
             
             def hash_progress(done, total):
                 if self._cancel_event.is_set():
@@ -580,7 +622,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
             
             # 3. Detection
             self._push("status", "Finding duplicates...", 0.9, False, "")
-            detection = detect_duplicates(h_map, hash_tolerance=settings.tolerance, all_images=res.images, folder_sizes=dict(res.folder_sizes), mode=settings.mode)
+            detection = detect_duplicates(h_map, hash_tolerance=settings.tolerance, exact_byte_dupes=exact_groups, all_images=res.images, folder_sizes=dict(res.folder_sizes), mode=settings.mode)
             
             self._push("status", "Scan complete!", 1.0, False, "")
             self._push_done(detection)
@@ -593,31 +635,13 @@ class SmartPhotoCleanerApp(ctk.CTk):
                 self._push("status", f"Error: {error_msg}", 0, True, "")
             self._push_done(None)
 
-    def _push(self, k, m, f, e, s): 
-        # capture any numeric count for speed calculations
-        try:
-            if isinstance(s, (int, float)):
-                self._last_count = int(s)
-        except Exception:
-            pass
+    def _push(self, k, m, f, e, s=None): 
+        # k: key, m: msg, f: fraction, e: is_error, s: count/status
         self._progress_queue.put((k, m, f, e, s))
-    def _push_done(self, r): 
-        scan_duration = time.perf_counter() - self._scan_start_time
-        minutes = int(scan_duration // 60)
-        seconds = int(scan_duration % 60)
-        duration_text = f"Scan completed in: {minutes} minutes {seconds} seconds"
-        self._scan_duration_label.configure(text=duration_text)
-        self._stop_elapsed_timer()
-        # update final speed using last count if available
-        if self._last_count and scan_duration > 0:
-            final_speed = self._last_count / scan_duration
-            self._speed_label.configure(text=f"Speed: {final_speed:.1f} files/sec")
-        self._progress_queue.put(("done", r))
 
     def _start_elapsed_timer(self):
-        if self._elapsed_timer is None:
-            self._update_elapsed_time()
-            self._elapsed_timer = self.after(1000, self._start_elapsed_timer)
+        self._update_elapsed_time()
+        self._elapsed_timer = self.after(1000, self._start_elapsed_timer)
 
     def _stop_elapsed_timer(self):
         if self._elapsed_timer:
@@ -639,6 +663,16 @@ class SmartPhotoCleanerApp(ctk.CTk):
                     m = self._progress_queue.get_nowait()
                     if m[0] == "status":
                         self._status_label.configure(text=m[1])
+                        if m[2] is not False and float(m[2]) > 0:
+                            self._progress_bar.set(m[2])
+                        try:
+                            if self._is_scanning and self._scan_start_time and m[4]:
+                                elapsed = time.perf_counter() - self._scan_start_time
+                                count = float(m[4])
+                                if elapsed > 0:
+                                    self._speed_label.configure(text=f"Speed: {count/elapsed:.1f} files/sec")
+                        except Exception:
+                            pass
                     elif m[0] == "partial_count":
                         self._stat_found.configure(text=m[1])
                         self._progress_bar.set(m[2])
@@ -664,27 +698,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
                     elif m[0] == "done":
                         # final stats
                         self._is_scanning = False; self._is_paused = False
-                        self._set_scanning_ui(False)
-                        
-                        # Process results
-                        if m[1]:
-                            # Automatically switch to Duplicates tab if we were on Dashboard
-                            # to show the user that results are ready.
-                            if not self._scan_request_tab or self._scan_request_tab == "Dashboard":
-                                self.select_frame_by_name("Duplicates")
-                                self._scan_request_tab = None # consume it
-                            elif self._scan_request_tab:
-                                self.select_frame_by_name(self._scan_request_tab)
-                                self._scan_request_tab = None
-                            
-                            self._render_results(m[1])
-                            
-                            # set speed based on total images checked
-                            total = getattr(m[1], "total_images_checked", None)
-                            if total and self._scan_start_time:
-                                elapsed = time.perf_counter() - self._scan_start_time
-                                if elapsed > 0:
-                                    self._speed_label.configure(text=f"Speed: {total/elapsed:.1f} files/sec")
+                        self._push_done(m[1])
                         break
                 except queue.Empty:
                     break
@@ -702,8 +716,8 @@ class SmartPhotoCleanerApp(ctk.CTk):
         
         # Reset pagination states
         self._render_state = {
-            "exact": {"index": 0, "groups": [g for g in det.groups if g.match_type != "near_duplicate"]},
-            "similar": {"index": 0, "groups": [g for g in det.groups if g.match_type == "near_duplicate"]},
+            "exact": {"index": 0, "groups": [g for g in det.groups if g.match_type == "exact_bytes"]},
+            "similar": {"index": 0, "groups": [g for g in det.groups if g.match_type in ("near_duplicate", "exact_hash")]},
             "screenshots": {"index": 0, "items": det.screenshots},
             "blurry": {"index": 0, "items": det.blurry_photos},
             "large": {"index": 0, "items": det.large_files},
@@ -740,6 +754,9 @@ class SmartPhotoCleanerApp(ctk.CTk):
         # Dashboard Sync: Ensure stats are updated after scan
         self._refresh_dashboard_stats()
         self._update_global_dashboard_stats()
+        
+        # Update tab counts
+        self._update_tab_titles()
 
     def _on_tab_scroll(self, tab_name: str):
         """Infinite scroll handler."""
@@ -1042,10 +1059,9 @@ class SmartPhotoCleanerApp(ctk.CTk):
         
         # Update stats
         total_scanned = getattr(self._detection_result, "total_images_checked", 0)
-        total_found = total_dup_images + screenshot_count + blurry_count + large_count + message_count
         
         self._stat_found.configure(text=str(total_scanned))
-        self._stat_unique.configure(text=str(total_scanned - total_found))
+        self._stat_unique.configure(text=str(total_scanned - extra))
         self._stat_dupes.configure(text=str(dup_groups))
         self._stat_waste.configure(text=f"{total_waste / (1024*1024):.1f} MB")
         self._stat_extra_copies.configure(text=str(extra))
@@ -1128,16 +1144,19 @@ class SmartPhotoCleanerApp(ctk.CTk):
         if not messagebox.askyesno("Confirm Delete", f"Are you sure you want to move {len(paths)} files to the Recycle Bin?"):
             return
 
+        # IMPORTANT: Calculate bytes saved BEFORE deletion
+        path_size_map = {}
+        for path in paths:
+            try:
+                path_size_map[path] = os.path.getsize(path)
+            except Exception:
+                path_size_map[path] = 0
+                
         res = delete_files(paths)
         deleted_set = set(res.deleted)
         
-        # Calculate bytes saved - get file sizes before they're deleted
-        bytes_saved = 0
-        for path in paths:
-            try:
-                bytes_saved += os.path.getsize(path)
-            except (OSError, ValueError):
-                pass
+        # Calculate actual bytes saved for successfully deleted files
+        bytes_saved = sum(path_size_map.get(p, 0) for p in res.deleted)
         
         # Refresh UI: remove deleted files from all cards
         for clist in all_card_lists:
@@ -1181,8 +1200,17 @@ class SmartPhotoCleanerApp(ctk.CTk):
         for frame in [self._scroll_exact, self._scroll_similar, self._scroll_screenshots, self._scroll_blurry, self._scroll_large, self._scroll_messages, self._scroll_timeline]:
             frame.update_idletasks()
         
-        self._show_toast(f"Successfully moved {len(res.deleted)} files to the Recycle Bin.")
+        if res.deleted:
+            self._show_toast(f"Successfully moved {len(res.deleted)} files to the Recycle Bin.")
+        else:
+            # If nothing was deleted, show why
+            error_msg = res.failed[0][1] if res.failed else "Check file permissions or Recycle Bin space."
+            messagebox.showerror("Delete Failed", f"Could not move files to Recycle Bin.\n\nError: {error_msg}")
+            
         if has_undoable_deletes(): self._undo_btn.pack(side="right", padx=10)
+        
+        # Finally update tab titles to reflect new counts
+        self._update_tab_titles()
 
     def _show_tab_info(self, tab_name: str):
         desc = self._tab_descriptions.get(tab_name, "No description available.")
@@ -1279,8 +1307,29 @@ class SmartPhotoCleanerApp(ctk.CTk):
             self._scroll_active_tab_to_top()
             
             if has_undoable_deletes(): self._undo_btn.pack(side="right", padx=10)
+            self._update_tab_titles() # NEW: Sync titles
             return True
         return False
+
+    def _update_tab_titles(self):
+        """Standardized helper to update the (X groups, Y photos) header labels for all tabs."""
+        if not hasattr(self, "_render_state"): return
+        for name in ["Duplicates", "Similar Photos", "Screenshots", "Blurry Photos", "Large Files", "Messages Media", "Timeline Viewer"]:
+            if name in self._tab_count_labels:
+                state_key = {
+                    "Duplicates": "exact", "Similar Photos": "similar",
+                    "Screenshots": "screenshots", "Blurry Photos": "blurry",
+                    "Large Files": "large", "Messages Media": "messages",
+                    "Timeline Viewer": "timeline"
+                }[name]
+                st = self._render_state[state_key]
+                if "groups" in st:
+                    n_groups = len(st["groups"])
+                    n_photos = sum(len(g.files) if hasattr(g, "files") else g.count for g in st["groups"])
+                    self._tab_count_labels[name].configure(text=f"({n_groups} groups, {n_photos} photos)")
+                else:
+                    n_items = len(st["items"])
+                    self._tab_count_labels[name].configure(text=f"({n_items} items)")
 
     def _set_status(self, t, c=TEXT_MUTED): self._status_label.configure(text=t, text_color=c)
     def _set_scanning_ui(self, s):
@@ -1291,6 +1340,32 @@ class SmartPhotoCleanerApp(ctk.CTk):
             b.configure(state=st)
         self._pause_btn.configure(state="normal" if s else "disabled")
         self._cancel_btn.configure(state="normal" if s else "disabled")
+
+    def _push_done(self, r):
+        if r:
+            # Switch view if needed
+            if not self._scan_request_tab or self._scan_request_tab == "Dashboard":
+                self.select_frame_by_name("Duplicates")
+            elif self._scan_request_tab:
+                self.select_frame_by_name(self._scan_request_tab)
+            self._scan_request_tab = None
+            
+            # Cache results for instant re-detection
+            self._detection_result = r
+            self._last_h_map = getattr(r, "hash_map", {})
+            self._last_exact_groups = getattr(r, "exact_byte_dupes", [])
+            
+            # Performance stats
+            dur = time.perf_counter() - self._scan_start_time
+            self._scan_duration_label.configure(text=f"Last Scan: {dur:.1f}s")
+            
+            # Render
+            self._render_results(r)
+        
+        self._set_scanning_ui(False)
+        self._stop_elapsed_timer()
+        self._set_status("Ready", TEXT_DIM)
+        self._update_tab_titles()
 
     def _on_slider_change(self, v):
         val = int(float(v))
@@ -1323,7 +1398,12 @@ class SmartPhotoCleanerApp(ctk.CTk):
             for clist in all_card_lists:
                 for c in clist:
                     paths.extend(c.get_selected_paths())
-            if not paths: return
+            # IMPORTANT: Pre-calculate sizes
+            path_size_map = {}
+            for p in paths:
+                try: path_size_map[p] = os.path.getsize(p)
+                except: path_size_map[p] = 0
+
             res = delete_files(paths)
             deleted_set = set(res.deleted)
             for clist in all_card_lists:
@@ -1332,10 +1412,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
                     c.destroy(); clist.remove(c)
             
             # Sync session stats for Quick Clean too
-            quick_bytes_saved = 0
-            for p in res.deleted: # Use res.deleted which is verified deleted
-                try: quick_bytes_saved += os.path.getsize(p)
-                except: pass
+            quick_bytes_saved = sum(path_size_map.get(p, 0) for p in res.deleted)
             
             self._session_deleted_count += len(res.deleted)
             self._session_saved_bytes += quick_bytes_saved
@@ -1346,6 +1423,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
             self._update_selected_count()
             self._refresh_dashboard_stats()
             self._update_global_dashboard_stats()
+            self._update_tab_titles() # NEW: Sync titles
             
             # IMPORTANT: Auto-load more after Quick Clean
             self._check_auto_load()
