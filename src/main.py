@@ -24,6 +24,11 @@ def _configure_logging():
     root.addHandler(console)
     root.addHandler(file_handler)
 
+    # Suppress PIL debug logging — TiffImagePlugin logs every EXIF tag at DEBUG,
+    # flooding the log with thousands of lines and causing I/O contention.
+    for pil_logger in ("PIL", "PIL.TiffImagePlugin", "PIL.Image", "PIL.PngImagePlugin"):
+        logging.getLogger(pil_logger).setLevel(logging.WARNING)
+
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()

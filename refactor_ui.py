@@ -1,7 +1,42 @@
 import re
+from pathlib import Path
+
+
+def find_ui_file() -> Path:
+    candidates = [Path("src/ui.py"), Path("src/ui/app.py")]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    ui_dir = Path("src/ui")
+    if ui_dir.is_dir():
+        py_files = sorted(ui_dir.glob("*.py"))
+        if py_files:
+            return py_files[0]
+
+    raise FileNotFoundError(
+        "Cannot locate the UI source file. Expected 'src/ui.py' or 'src/ui/app.py'. "
+        "Create the file or update this script with the correct target path."
+    )
+
+
+def replace_block(content: str, old: str, new: str, description: str) -> str:
+    if old not in content:
+        print(f"Warning: {description} not found; skipping.")
+        return content
+    return content.replace(old, new)
+
+
+def replace_pattern(content: str, pattern: re.Pattern, new: str, description: str) -> str:
+    if not pattern.search(content):
+        print(f"Warning: {description} pattern not found; skipping.")
+        return content
+    return pattern.sub(new, content)
+
 
 def main():
-    with open("src/ui.py", "r", encoding="utf-8") as f:
+    ui_path = find_ui_file()
+    with ui_path.open("r", encoding="utf-8") as f:
         content = f.read()
 
     # 1. Update __init__ tracking lists
@@ -14,13 +49,12 @@ def main():
         self._screenshot_cards: list[FileGridCard] = []
         self._blurry_cards: list[FileGridCard] = []
         self._large_cards: list[FileGridCard] = []"""
-    content = content.replace(old_init_lists, new_init_lists)
+    content = replace_block(content, old_init_lists, new_init_lists, "__init__ tracking list updates")
 
     # 2. Complete rewrite of _build_layout
-    # Since _build_layout is very long (line 500 to 650+), we will replace from `def _build_layout(self):` to `def _stat_card(self, parent, label: str, value: str) -> ctk.CTkLabel:`
-    
+    # Since _build_layout is very long, we replace the old block only if it matches the expected pattern.
     layout_pattern = re.compile(r"    def _build_layout\(self\):.*?    def _stat_card", re.DOTALL)
-    
+
     new_layout = """    def _build_layout(self):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
@@ -234,10 +268,10 @@ def main():
 
     def _stat_card"""
     
-    content = layout_pattern.sub(new_layout, content)
+    content = replace_pattern(content, layout_pattern, new_layout, "_build_layout replacement")
 
     # 3. Update Result Rendering & Clear routines
-    old_render = r"    def _render_results\(self.*?    def _clear_results"
+    old_render = re.compile(r"    def _render_results\(self.*?    def _clear_results", re.DOTALL)
     
     new_render_code = """    def _render_results(self, detection: DetectionResult):
         self._clear_results()
@@ -292,10 +326,9 @@ def main():
         self._set_status(f"Scan complete in {elapsed:.1f}s — {detection.duplicate_group_count} group(s) · {waste_mb:.1f} MB reclaimable", SUCCESS)
 
     def _clear_results"""
-    content = re.sub(old_render, new_render_code, content, flags=re.DOTALL)
+    content = replace_pattern(content, old_render, new_render_code, "_render_results replacement")
 
-
-    old_clear = r"    def _clear_results\(self.*?    def _show_empty_state"
+    old_clear = re.compile(r"    def _clear_results\(self.*?    def _show_empty_state", re.DOTALL)
     new_clear_code = """    def _clear_results(self):
         if hasattr(self, "_scroll_exact"):
             for scroll in [self._scroll_exact, self._scroll_similar, self._scroll_screenshots, self._scroll_blurry, self._scroll_large]:
@@ -317,19 +350,17 @@ def main():
             self._quick_clean_btn.configure(state="disabled")
 
     def _show_empty_state"""
-    content = re.sub(old_clear, new_clear_code, content, flags=re.DOTALL)
-
+    content = replace_pattern(content, old_clear, new_clear_code, "_clear_results replacement")
 
     # 4. Update the _update_selected_count and delete logic
-    def replace_cards_list(match):
-        return match.group(0).replace("self._group_cards", "self._exact_group_cards + self._similar_group_cards")
-
-    # Only replace in specific functions
-    for func in ["_update_selected_count", "_select_all_duplicates", "_delete_selected", "_quick_clean", "card.remove_paths"]:
-        # We need to replace `self._group_cards + self._screenshot...` with `self._exact_group_cards + self._similar_group_cards + ...`
-        content = content.replace("self._group_cards + self._screenshot_cards", "self._exact_group_cards + self._similar_group_cards + self._screenshot_cards")
-
-    content = content.replace("for card in self._group_cards:", "for card in self._exact_group_cards + self._similar_group_cards:")
+    content = content.replace(
+        "self._group_cards + self._screenshot_cards",
+        "self._exact_group_cards + self._similar_group_cards + self._screenshot_cards"
+    )
+    content = content.replace(
+        "for card in self._group_cards:",
+        "for card in self._exact_group_cards + self._similar_group_cards:"
+    )
 
     # 5. Fixing the toggle theme logic which references self._theme_btn text
     old_theme_toggle = """    def _toggle_theme(self):
@@ -347,10 +378,12 @@ def main():
         else:
             ctk.set_appearance_mode("dark")
             self._theme_btn.configure(text="☀ Light Mode")"""
-    content = content.replace(old_theme_toggle, new_theme_toggle)
+    content = replace_block(content, old_theme_toggle, new_theme_toggle, "theme toggle button text update")
 
-    with open("src/ui.py", "w", encoding="utf-8") as f:
+    with ui_path.open("w", encoding="utf-8") as f:
         f.write(content)
+
+    print(f"Refactor complete. Updated {ui_path}")
 
 if __name__ == "__main__":
     main()

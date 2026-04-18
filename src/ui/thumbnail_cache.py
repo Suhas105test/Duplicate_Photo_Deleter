@@ -76,14 +76,16 @@ class ThumbnailCache:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps))
                 
                 ret, frame = cap.read()
-                cap.release()
                 
                 if not ret:
+                    cap.release()
                     raise Exception("Could not read frame from video")
                 
                 # Convert BGR (OpenCV) to RGB (PIL)
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img_pil = Image.fromarray(frame_rgb)
+                original_res = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+                cap.release()
             else:
                 # Standard image handling
                 try:

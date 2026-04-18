@@ -8,7 +8,8 @@ class FileGridCard(ctk.CTkFrame):
     """Widget displaying a grid of single file thumbnails."""
     def __init__(self, parent, title: str, paths: list[str], thumb_cache: ThumbnailCache, on_selection_change, **kwargs):
         super().__init__(parent, fg_color=BG_CARD, corner_radius=12, **kwargs)
-        self.paths = paths
+        self.all_paths = paths
+        self.paths = []
         self.thumb_cache = thumb_cache
         self.on_selection_change = on_selection_change
         self._checkboxes: dict[str, ctk.CTkCheckBox] = {}
@@ -32,14 +33,33 @@ class FileGridCard(ctk.CTkFrame):
         self.grid_container = ctk.CTkFrame(self, fg_color="transparent")
         self.grid_container.pack(fill="x", padx=16, pady=(0, 16))
         
-        # Create all thumb widgets upfront
-        self._thumb_widgets = {}
-        for path in self.paths:
-            self._thumb_widgets[path] = self._add_thumb(path)
+        self.footer = ctk.CTkFrame(self, fg_color="transparent")
+        self.footer.pack(fill="x", padx=16, pady=(0, 16))
+        self.load_more_btn = ctk.CTkButton(self.footer, text="Load More", command=self.load_more_items)
 
-        self.after(100, self._re_layout)
-        self.bind("<Configure>", lambda e: self._re_layout())
+        self._thumb_widgets = {}
         self._loaded_paths = set()
+        
+        self.load_more_items(initial=True)
+        self.bind("<Configure>", lambda e: self._re_layout())
+
+    def load_more_items(self, initial=False):
+        current_count = len(self.paths)
+        next_count = min(current_count + 50, len(self.all_paths))
+        new_paths = self.all_paths[current_count:next_count]
+        
+        for path in new_paths:
+            self.paths.append(path)
+            self._thumb_widgets[path] = self._add_thumb(path)
+            
+        if len(self.paths) >= len(self.all_paths):
+            self.load_more_btn.pack_forget()
+        else:
+            self.load_more_btn.pack(pady=10)
+            
+        self._re_layout()
+        if not initial:
+            self.load_thumbnails()
 
     def add_paths(self, new_paths: list[str]):
         """Adds more paths to this grid for lazy loading."""
@@ -69,6 +89,9 @@ class FileGridCard(ctk.CTkFrame):
 
         fname = os.path.basename(path)
         if len(fname) > 12: fname = fname[:10] + "..."
+        name_lbl = ctk.CTkLabel(bot, text=fname, font=ctk.CTkFont(size=11), text_color=TEXT_MUTED, cursor="hand2")
+        name_lbl.pack(side="left", padx=4)
+        name_lbl.bind("<Button-1>", lambda e, p=path: self._open_external(p))
         return card
 
     def load_thumbnails(self):
@@ -94,6 +117,14 @@ class FileGridCard(ctk.CTkFrame):
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning("ImageViewer failed to open: %s", e)
+            self._open_external(starting_path)
+
+    def _open_external(self, path: str):
+        try:
+            os.startfile(path)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to open externally: %s", e)
 
     def _on_thumb_ready(self, path: str, ctk_img: Optional[ctk.CTkImage]):
         if path in self._images_labels:
@@ -137,6 +168,8 @@ class FileGridCard(ctk.CTkFrame):
 
     def remove_paths(self, deleted: Set[str]) -> bool:
         for path in list(deleted):
+            if path in getattr(self, "all_paths", []):
+                self.all_paths.remove(path)
             if path in self.paths:
                 self.paths.remove(path)
                 if path in self._thumb_widgets:
@@ -147,6 +180,9 @@ class FileGridCard(ctk.CTkFrame):
                 if path in self._images_labels:
                     del self._images_labels[path]
         
+        if hasattr(self, "load_more_btn") and len(self.paths) >= len(getattr(self, "all_paths", self.paths)):
+            self.load_more_btn.pack_forget()
+
         # Force re-layout after deletion
         self.after(0, self._re_layout)
-        return len(self.paths) == 0
+        return len(getattr(self, "all_paths", self.paths)) == 0

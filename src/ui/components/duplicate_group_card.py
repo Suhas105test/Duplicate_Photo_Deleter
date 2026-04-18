@@ -131,7 +131,9 @@ class DuplicateGroupCard(ctk.CTkFrame):
         # Filename
         fname = os.path.basename(path)
         if len(fname) > 12: fname = fname[:10] + "..."
-        ctk.CTkLabel(bot, text=fname, font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(side="left", padx=4)
+        name_lbl = ctk.CTkLabel(bot, text=fname, font=ctk.CTkFont(size=11), text_color=TEXT_MUTED, cursor="hand2")
+        name_lbl.pack(side="left", padx=4)
+        name_lbl.bind("<Button-1>", lambda e, p=path: self._open_external(p))
 
         if is_keeper:
             keeper_label = ctk.CTkLabel(card, text="⭐ BEST", font=ctk.CTkFont(size=9, weight="bold"),
@@ -197,7 +199,7 @@ class DuplicateGroupCard(ctk.CTkFrame):
         self._deselect_all()
 
     def select_all_except_keep(self):
-        """Select all files except the suggested 'best' keeper — used by Quick Clean."""
+        """Select all files except the suggested 'best' keeper — used by Mass Delete."""
         keep = self.group.suggested_keep
         for path, cb in self._checkboxes.items():
             if path == keep:
@@ -223,6 +225,14 @@ class DuplicateGroupCard(ctk.CTkFrame):
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning("ImageViewer failed: %s", e)
+            self._open_external(starting_path)
+
+    def _open_external(self, path: str):
+        try:
+            os.startfile(path)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to open externally: %s", e)
 
     def get_selected_paths(self) -> list[str]:
         return [p for p, cb in self._checkboxes.items() if cb.get()]

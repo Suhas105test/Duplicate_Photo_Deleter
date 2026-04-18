@@ -10,7 +10,7 @@ from typing import Optional
 import customtkinter as ctk
 
 from folder_scanner import (
-    scan_folder, scan_files, 
+    scan_folder, scan_folders, scan_files,
     VIDEO_EXTENSIONS, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS
 )
 from hash_generator import generate_hashes, find_exact_byte_duplicates
@@ -41,7 +41,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
         self.minsize(960, 680)
         self.configure(fg_color=BG_DARK)
 
-        self._folder_path: Optional[str] = None
+        self._folder_paths: list[str] = []           # Multi-folder scanning
         self._selected_files_list: Optional[list[str]] = None
         self._scan_request_tab: Optional[str] = None  # which tab initiated the scan
         self._detection_result: Optional[DetectionResult] = None
@@ -88,6 +88,9 @@ class SmartPhotoCleanerApp(ctk.CTk):
             "Messages Media": "messages",
             "Timeline Viewer": "timeline",
         }
+        self._folder_row_widgets = []
+        self._tab_count_labels = {}
+        self._render_state = {}
 
         log = logging.getLogger("ui.app.SmartPhotoCleanerApp")
         log.info("Building layout...")
@@ -120,244 +123,396 @@ class SmartPhotoCleanerApp(ctk.CTk):
         os._exit(0)
 
     def _build_layout(self):
-        log = logging.getLogger("ui.app._build_layout")
-        log.info("Starting _build_layout...")
-        
-        try:
-            log.info("Configuring grid...")
-            self.grid_rowconfigure(0, weight=1)
-            self.grid_columnconfigure(0, weight=0)
-            self.grid_columnconfigure(1, weight=1)
-            log.info("Grid configured")
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
 
-            # Sidebar
-            log.info("Creating sidebar...")
-            self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color=BG_CARD)
-            self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
+        # ── Sidebar ─────────────────────────────────────────────────────────
+        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color=BG_CARD)
+        self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
+        self.sidebar_frame.grid_rowconfigure(11, weight=1)
 
-            ctk.CTkLabel(
-                self.sidebar_frame, text="Smart Photo\nCleaner",
-                font=ctk.CTkFont(size=20, weight="bold"), text_color=ACCENT
-            ).grid(row=0, column=0, padx=20, pady=(20, 30))
-            log.info("Sidebar created")
+        ctk.CTkLabel(
+            self.sidebar_frame, text="Smart Photo\nCleaner",
+            font=ctk.CTkFont(size=20, weight="bold"), text_color=ACCENT
+        ).grid(row=0, column=0, padx=20, pady=(20, 30))
 
-            self.nav_btns = {}
-            items = ["Dashboard", "Duplicates", "Blurry Photos", "Screenshots", "Messages Media", "Similar Photos", "Timeline Viewer", "Large Files", "Media Compressor", "Settings"]
-            for i, text in enumerate(items):
-                btn = ctk.CTkButton(
-                    self.sidebar_frame, text=text, fg_color="transparent", text_color=TEXT_BLACK,
-                    hover_color="#334155", anchor="w", command=lambda t=text: self.select_frame_by_name(t)
-                )
-                btn.grid(row=i+1, column=0, padx=10, pady=5, sticky="ew")
-                self.nav_btns[text] = btn
-
-            self.sidebar_frame.grid_rowconfigure(12, weight=1)
-            self._theme_btn = ctk.CTkButton(self.sidebar_frame, text="☀ Light Mode", command=self._toggle_theme)
-            self._theme_btn.grid(row=13, column=0, padx=20, pady=20)
-            log.info("Navigation buttons created")
-
-            # Main
-            log.info("Creating main container...")
-            self.main_container = ctk.CTkFrame(self, fg_color=BG_DARK, corner_radius=0)
-            self.main_container.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-            log.info("Main container created")
-
-            log.info("Initializing frames...")
-            self.frames = {}
-            self._init_frames()
-            log.info("Frames initialized")
-
-            # Tab headline (created once, updated per tab)
-            log.info("Creating tab headline...")
-            self._current_tab_label = ctk.CTkLabel(
-                self.main_container,
-                text="",
-                font=ctk.CTkFont(size=12),
-                text_color=TEXT_MUTED
+        self.nav_btns = {}
+        for i, text in enumerate(["Dashboard", "Duplicates", "Similar Photos", "Screenshots", "Blurry Photos", "Large Files", "Messages Media", "Timeline Viewer", "Media Compressor", "Settings"]):
+            btn = ctk.CTkButton(
+                self.sidebar_frame, text=text, fg_color="transparent", text_color="white",
+                hover_color="#334155", anchor="w", command=lambda t=text: self.select_frame_by_name(t)
             )
-            log.info("Tab headline created")
+            btn.grid(row=i+1, column=0, padx=10, pady=5, sticky="ew")
+            self.nav_btns[text] = btn
 
-            # Action Bar
-            log.info("Creating action bar...")
-            self._action_bar = ctk.CTkFrame(self.main_container, fg_color=BG_CARD, corner_radius=12)
-            self._delete_btn = ctk.CTkButton(self._action_bar, text="🗑  Delete Selected", fg_color=DANGER, command=self._delete_selected, state="disabled")
-            self._delete_btn.pack(side="left", padx=12, pady=10)
-            self._compress_btn = ctk.CTkButton(self._action_bar, text="🗜 Compress Selected", fg_color="#0EA5E9", command=self._compress_selected, state="disabled")
-            self._compress_btn.pack(side="left", padx=(0, 8), pady=10)
-            self._quick_clean_btn = ctk.CTkButton(self._action_bar, text="⚡ Quick Clean", fg_color=WARN, command=self._quick_clean, state="disabled")
-            self._quick_clean_btn.pack(side="left", padx=(0, 8), pady=10)
-            self._select_all_btn = ctk.CTkButton(self._action_bar, text="✓  Auto-Select", command=self._select_all_duplicates, state="disabled")
-            self._select_all_btn.pack(side="left", padx=(0, 8), pady=10)
-            self._undo_btn = ctk.CTkButton(self._action_bar, text="↶  Undo", fg_color="#D97706", command=self._undo_last_delete)
-            self._result_label = ctk.CTkLabel(self._action_bar, text="", text_color=SUCCESS)
-            self._result_label.pack(side="right", padx=16)
-            log.info("Action bar created")
+        # Theme toggle at bottom of sidebar
+        self._theme_btn = ctk.CTkButton(
+            self.sidebar_frame, text="☀ Light Mode", fg_color="#334155", hover_color="#475569",
+            command=self._toggle_theme
+        )
+        self._theme_btn.grid(row=11, column=0, padx=20, pady=20)
 
-            log.info("Selecting Dashboard frame...")
-            self.select_frame_by_name("Dashboard")
-            log.info("_build_layout completed successfully!")
-        except Exception as e:
-            log.error(f"Error in _build_layout: {str(e)}", exc_info=True)
-            raise
+        # ── Main Content Container ──────────────────────────────────────────
+        self.main_container = ctk.CTkFrame(self, fg_color=BG_DARK, corner_radius=0)
+        self.main_container.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        self.main_container.grid_rowconfigure(0, weight=1)
+        self.main_container.grid_columnconfigure(0, weight=1)
 
-    def _init_frames(self):
-        dash = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.frames = {}
+
+        # 1. Dashboard
+        dash = ctk.CTkScrollableFrame(self.main_container, fg_color="transparent")
         self.frames["Dashboard"] = dash
-        
-        # Dashboard Header
-        header = ctk.CTkFrame(dash, fg_color="transparent")
-        header.pack(fill="x", pady=(10, 20))
-        ctk.CTkLabel(header, text="Dashboard", font=ctk.CTkFont(size=24, weight="bold")).pack(side="left", anchor="w")
-        ctk.CTkButton(header, text="ℹ", width=30, height=30, command=lambda: self._show_tab_info("Dashboard")).pack(side="right", padx=(10, 0))
-        
         self._build_dashboard(dash)
 
-        # keep track of tab-specific scan buttons so we can enable/disable them
-        self._tab_scan_buttons: list[ctk.CTkButton] = []
-        self._tab_count_labels: dict[str, ctk.CTkLabel] = {}
-        for name, attr in [("Duplicates", "_scroll_exact"), ("Screenshots", "_scroll_screenshots"), ("Messages Media", "_scroll_messages"), ("Similar Photos", "_scroll_similar"), ("Blurry Photos", "_scroll_blurry"), ("Large Files", "_scroll_large"), ("Timeline Viewer", "_scroll_timeline")]:
-            f = ctk.CTkFrame(self.main_container, fg_color="transparent")
-            self.frames[name] = f
-            # Header with title and info button
-            header = ctk.CTkFrame(f, fg_color="transparent")
-            header.pack(fill="x", pady=(10, 20))
-            ctk.CTkLabel(header, text=name, font=ctk.CTkFont(size=24, weight="bold")).pack(side="left", anchor="w")
-            count_lbl = ctk.CTkLabel(header, text="", font=ctk.CTkFont(size=14, weight="bold"), text_color=TEXT_MUTED)
-            count_lbl.pack(side="left", padx=(12, 0), anchor="s", pady=(0, 4))
-            self._tab_count_labels[name] = count_lbl
-            info_btn = ctk.CTkButton(header, text="ℹ", width=30, height=30, command=lambda n=name: self._show_tab_info(n))
-            info_btn.pack(side="right", padx=(10, 0))
-            # each feature tab gets its own scan/refresh button
-            btn_box = ctk.CTkFrame(f, fg_color="transparent")
-            btn_box.pack(anchor="ne", padx=20, pady=(0, 10))
-            
-            if name == "Similar Photos":
-                # Add similarity slider directly here
-                sim_row = ctk.CTkFrame(btn_box, fg_color="transparent")
-                sim_row.pack(side="left", padx=20)
-                ctk.CTkLabel(sim_row, text="Threshold:", font=ctk.CTkFont(size=11, weight="bold")).pack(side="left", padx=5)
-                self._tol_slider = ctk.CTkSlider(sim_row, from_=0, to=10, width=120, number_of_steps=10, command=self._on_slider_change)
-                self._tol_slider.set(self._settings.tolerance)
-                self._tol_slider.pack(side="left", padx=5)
-                self._tol_label = ctk.CTkLabel(sim_row, text=str(self._settings.tolerance), font=ctk.CTkFont(size=11), width=30)
-                self._tol_label.pack(side="left", padx=5)
+        # 2. Duplicates
+        dupes = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.frames["Duplicates"] = dupes
+        self._build_tab_header(dupes, "Duplicates")
+        self._scroll_exact = ctk.CTkScrollableFrame(dupes, fg_color="transparent")
+        self._scroll_exact.pack(fill="both", expand=True)
+        empty_frame = ctk.CTkFrame(self._scroll_exact, fg_color="transparent")
+        empty_frame.pack(expand=True, pady=80)
+        ctk.CTkLabel(empty_frame, text="No Files", text_color=TEXT_MUTED, font=ctk.CTkFont(size=16)).pack()
+        help_btn = ctk.CTkButton(empty_frame, text="?", width=30, height=30, font=ctk.CTkFont(size=12), command=lambda: messagebox.showinfo("Duplicates", self._tab_descriptions["Duplicates"]))
+        help_btn.pack(pady=(10, 0))
 
-            scan_btn = ctk.CTkButton(btn_box, text=f"🔍 Scan {name}", command=lambda n=name: self._scan_from_tab(n, self._tab_modes.get(n, "photos")))
-            scan_btn.pack(side="right")
-            self._tab_scan_buttons.append(scan_btn)
-            s = ctk.CTkScrollableFrame(f, fg_color="transparent")
-            s.pack(fill="both", expand=True)
-            setattr(self, attr, s)
-            
-            # Bind infinite scroll
-            s._parent_canvas.bind("<MouseWheel>", lambda e, n=name: self._on_tab_scroll(n))
-            s._parent_canvas.bind("<Button-4>", lambda e, n=name: self._on_tab_scroll(n)) # Linux scroll up
-            s._parent_canvas.bind("<Button-5>", lambda e, n=name: self._on_tab_scroll(n)) # Linux scroll down
+        # 3. Similar Photos
+        sim = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.frames["Similar Photos"] = sim
+        self._build_tab_header(sim, "Similar Photos")
+        self._scroll_similar = ctk.CTkScrollableFrame(sim, fg_color="transparent")
+        self._scroll_similar.pack(fill="both", expand=True)
+        empty_frame = ctk.CTkFrame(self._scroll_similar, fg_color="transparent")
+        empty_frame.pack(expand=True, pady=80)
+        ctk.CTkLabel(empty_frame, text="No Files", text_color=TEXT_MUTED, font=ctk.CTkFont(size=16)).pack()
+        help_btn = ctk.CTkButton(empty_frame, text="?", width=30, height=30, font=ctk.CTkFont(size=12), command=lambda: messagebox.showinfo("Similar Photos", self._tab_descriptions["Similar Photos"]))
+        help_btn.pack(pady=(10, 0))
 
+        # 4. Screenshots
+        scr = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.frames["Screenshots"] = scr
+        self._build_tab_header(scr, "Screenshots")
+        self._scroll_screenshots = ctk.CTkScrollableFrame(scr, fg_color="transparent")
+        self._scroll_screenshots.pack(fill="both", expand=True)
+        empty_frame = ctk.CTkFrame(self._scroll_screenshots, fg_color="transparent")
+        empty_frame.pack(expand=True, pady=80)
+        ctk.CTkLabel(empty_frame, text="No Files", text_color=TEXT_MUTED, font=ctk.CTkFont(size=16)).pack()
+        help_btn = ctk.CTkButton(empty_frame, text="?", width=30, height=30, font=ctk.CTkFont(size=12), command=lambda: messagebox.showinfo("Screenshots", self._tab_descriptions["Screenshots"]))
+        help_btn.pack(pady=(10, 0))
+
+        # 5. Blurry Photos
+        blur = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.frames["Blurry Photos"] = blur
+        self._build_tab_header(blur, "Blurry Photos")
+        self._scroll_blurry = ctk.CTkScrollableFrame(blur, fg_color="transparent")
+        self._scroll_blurry.pack(fill="both", expand=True)
+        empty_frame = ctk.CTkFrame(self._scroll_blurry, fg_color="transparent")
+        empty_frame.pack(expand=True, pady=80)
+        ctk.CTkLabel(empty_frame, text="No Files", text_color=TEXT_MUTED, font=ctk.CTkFont(size=16)).pack()
+        help_btn = ctk.CTkButton(empty_frame, text="?", width=30, height=30, font=ctk.CTkFont(size=12), command=lambda: messagebox.showinfo("Blurry Photos", self._tab_descriptions["Blurry Photos"]))
+        help_btn.pack(pady=(10, 0))
+
+        # 6. Large Files
+        large = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.frames["Large Files"] = large
+        self._build_tab_header(large, "Large Files")
+        self._scroll_large = ctk.CTkScrollableFrame(large, fg_color="transparent")
+        self._scroll_large.pack(fill="both", expand=True)
+        empty_frame = ctk.CTkFrame(self._scroll_large, fg_color="transparent")
+        empty_frame.pack(expand=True, pady=80)
+        ctk.CTkLabel(empty_frame, text="No Files", text_color=TEXT_MUTED, font=ctk.CTkFont(size=16)).pack()
+        help_btn = ctk.CTkButton(empty_frame, text="?", width=30, height=30, font=ctk.CTkFont(size=12), command=lambda: messagebox.showinfo("Large Files", self._tab_descriptions["Large Files"]))
+        help_btn.pack(pady=(10, 0))
+
+        # 7. Messages Media
+        msg = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.frames["Messages Media"] = msg
+        self._build_tab_header(msg, "Messages Media")
+        self._scroll_messages = ctk.CTkScrollableFrame(msg, fg_color="transparent")
+        self._scroll_messages.pack(fill="both", expand=True)
+        empty_frame = ctk.CTkFrame(self._scroll_messages, fg_color="transparent")
+        empty_frame.pack(expand=True, pady=80)
+        ctk.CTkLabel(empty_frame, text="No Files", text_color=TEXT_MUTED, font=ctk.CTkFont(size=16)).pack()
+        help_btn = ctk.CTkButton(empty_frame, text="?", width=30, height=30, font=ctk.CTkFont(size=12), command=lambda: messagebox.showinfo("Messages Media", self._tab_descriptions["Messages Media"]))
+        help_btn.pack(pady=(10, 0))
+
+        # 8. Timeline Viewer
+        timeline = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.frames["Timeline Viewer"] = timeline
+        self._build_tab_header(timeline, "Timeline Viewer")
+        self._scroll_timeline = ctk.CTkScrollableFrame(timeline, fg_color="transparent")
+        self._scroll_timeline.pack(fill="both", expand=True)
+        empty_frame = ctk.CTkFrame(self._scroll_timeline, fg_color="transparent")
+        empty_frame.pack(expand=True, pady=80)
+        ctk.CTkLabel(empty_frame, text="No Files", text_color=TEXT_MUTED, font=ctk.CTkFont(size=16)).pack()
+        help_btn = ctk.CTkButton(empty_frame, text="?", width=30, height=30, font=ctk.CTkFont(size=12), command=lambda: messagebox.showinfo("Timeline Viewer", self._tab_descriptions["Timeline Viewer"]))
+        help_btn.pack(pady=(10, 0))
+
+        # 9. Media Compressor
+        compressor_tab = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.frames["Media Compressor"] = compressor_tab
+        self._build_compressor_tab(compressor_tab)
+
+        # 10. Settings
         stg = ctk.CTkFrame(self.main_container, fg_color="transparent")
         self.frames["Settings"] = stg
-        # Header for Settings
-        header = ctk.CTkFrame(stg, fg_color="transparent")
-        header.pack(fill="x", pady=(10, 20))
-        ctk.CTkLabel(header, text="Settings", font=ctk.CTkFont(size=24, weight="bold")).pack(side="left", anchor="w")
-        info_btn = ctk.CTkButton(header, text="ℹ", width=30, height=30, command=lambda: self._show_tab_info("Settings"))
-        info_btn.pack(side="right", padx=(10, 0))
         self._build_settings(stg)
-        comp = ctk.CTkFrame(self.main_container, fg_color="transparent")
-        self.frames["Media Compressor"] = comp
-        # Header for Media Compressor
-        header = ctk.CTkFrame(comp, fg_color="transparent")
-        header.pack(fill="x", pady=(10, 20))
-        ctk.CTkLabel(header, text="Media Compressor", font=ctk.CTkFont(size=24, weight="bold")).pack(side="left", anchor="w")
-        info_btn = ctk.CTkButton(header, text="ℹ", width=30, height=30, command=lambda: self._show_tab_info("Media Compressor"))
-        info_btn.pack(side="right", padx=(10, 0))
-        self._build_compressor_tab(comp)
 
-    def select_frame_by_name(self, name):
-        for n, b in self.nav_btns.items(): b.configure(fg_color="#334155" if n == name else "transparent")
-        for f in self.frames.values(): f.pack_forget()
-        self._current_tab_label.pack_forget()
-        self._action_bar.pack_forget()
+        # Shared Action Bar for all views except Dashboard & Settings
+        self._action_bar = ctk.CTkFrame(self.main_container, fg_color=BG_CARD, corner_radius=12)
         
+        self._delete_btn = ctk.CTkButton(
+            self._action_bar, text="🗑  Delete Selected", height=40, font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=DANGER, hover_color="#B91C1C", command=self._delete_selected, state="disabled"
+        )
+        self._delete_btn.pack(side="left", padx=12, pady=10)
+
+        self._quick_clean_btn = ctk.CTkButton(
+            self._action_bar, text="⚡ Quick Clean", height=40, font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=WARN, hover_color="#D97706", command=self._quick_clean, state="disabled"
+        )
+        self._quick_clean_btn.pack(side="left", padx=(0, 8), pady=10)
+
+        self._select_all_btn = ctk.CTkButton(
+            self._action_bar, text="✓  Auto-Select Relevant", height=40, font=ctk.CTkFont(size=12),
+            fg_color="#334155", hover_color="#475569", command=self._select_all_duplicates, state="disabled"
+        )
+        self._select_all_btn.pack(side="left", padx=(0, 8), pady=10)
+
+        self._result_label = ctk.CTkLabel(self._action_bar, text="", font=ctk.CTkFont(size=12), text_color=SUCCESS)
+        self._result_label.pack(side="right", padx=16)
+
+        # Start on dashboard
+        self.select_frame_by_name("Dashboard")
+
+
+    def select_frame_by_name(self, name: str):
+        # Update button colors
+        for btn_name, btn in self.nav_btns.items():
+            if btn_name == name:
+                btn.configure(fg_color="#334155")
+            else:
+                btn.configure(fg_color="transparent")
+
+        # Hide all frames
+        for frame in self.frames.values():
+            frame.grid_forget()
+        self._action_bar.grid_forget()
+
         # Show selected frame
-        self.frames[name].pack(fill="both", expand=True, padx=0, pady=0)
-        
-        # Show action bar if needed
-        if name not in ["Dashboard", "Settings", "Media Compressor"]:
-            self._action_bar.pack(fill="x", pady=(10, 0))
-            # Trigger lazy loading for the current tab
-            self.after(200, lambda: self._trigger_lazy_load(name))
+        self.frames[name].grid(row=0, column=0, sticky="nsew")
+        if name not in ["Dashboard", "Settings"]:
+            self._action_bar.grid(row=1, column=0, sticky="ew", pady=(10, 0))
 
-    def _trigger_lazy_load(self, tab_name: str):
-        """Triggers thumbnail loading for cards in the current tab."""
-        # Map tab names to their card lists
-        tab_to_cards = {
-            "Duplicates": self._exact_group_cards,
-            "Similar Photos": self._similar_group_cards,
-            "Screenshots": self._screenshot_cards,
-            "Messages Media": self._message_cards,
-            "Blurry Photos": self._blurry_cards,
-            "Large Files": self._large_cards,
-            "Timeline Viewer": self._timeline_cards,
-        }
-        cards = tab_to_cards.get(tab_name, [])
-        # In a full implementation, we'd only load visible cards.
-        # For now, we'll load all cards in the tab but only when the tab is switched to,
-        # avoiding the initial "all tabs at once" spam.
-        for card in cards:
-            card.load_thumbnails()
 
     def _build_dashboard(self, parent):
-        p = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12); p.pack(fill="x", pady=(0, 20))
-        r = ctk.CTkFrame(p, fg_color="transparent"); r.pack(fill="x", padx=16, pady=16)
-        self._folder_entry = ctk.CTkEntry(r, placeholder_text="Select folder...", state="readonly", border_width=2); self._folder_entry.pack(side="left", fill="x", expand=True)
-        ctk.CTkButton(r, text="📁 Browse Folder", command=self._select_folder).pack(side="left", padx=8)
-        ctk.CTkButton(r, text="📄 Select Files", fg_color="#334155", hover_color="#475569", command=self._select_files).pack(side="left", padx=(0, 4))
-        
-        # HEIC format note (below browsing buttons in same panel)
-        ctk.CTkLabel(p, text="Note:  ℹ️  HEIC format requires Microsoft HEIC Image Extensions from Windows Store for viewing.", font=ctk.CTkFont(size=9), text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(0, 12))
-        
-        c = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12); c.pack(fill="x", pady=(0, 20))
-        br = ctk.CTkFrame(c, fg_color="transparent"); br.pack(fill="x", padx=16, pady=16)
-        self._scan_btn = ctk.CTkButton(br, text="🔍 Scan Photos & Docs", command=self._start_photo_scan, state="disabled"); self._scan_btn.pack(side="left")
-        self._scan_videos_btn = ctk.CTkButton(br, text="🎥 Scan Videos", fg_color="#4F46E5", command=self._start_video_scan, state="disabled"); self._scan_videos_btn.pack(side="left", padx=10)
-        self._pause_btn = ctk.CTkButton(br, text="⏸ Pause", fg_color="#F59E0B", command=self._pause_resume_scan, state="disabled"); self._pause_btn.pack(side="left", padx=10)
-        self._cancel_btn = ctk.CTkButton(br, text="✕ Cancel", width=60, fg_color=DANGER, hover_color="#B91C1C", command=self._cancel_scan, state="disabled"); self._cancel_btn.pack(side="left")
+        # ── Hero Header ─────────────────────────────────────────────────────
+        hero = ctk.CTkFrame(parent, fg_color=("#1E40AF", "#1E3A5F"), corner_radius=16)
+        hero.pack(fill="x", pady=(0, 20))
 
-        self._status_label = ctk.CTkLabel(c, text="Idle", text_color=TEXT_MUTED); self._status_label.pack(padx=16, anchor="w")
-        self._progress_bar = ctk.CTkProgressBar(c, height=8); self._progress_bar.pack(fill="x", padx=16, pady=10); self._progress_bar.set(0)
-        
-        # Elapsed time and speed indicators
-        self._elapsed_label = ctk.CTkLabel(c, text="Elapsed: 00:00", text_color=TEXT_DIM, font=ctk.CTkFont(size=10))
-        self._elapsed_label.pack(padx=16, anchor="w")
-        self._speed_label = ctk.CTkLabel(c, text="Speed: 0 files/sec", text_color=TEXT_DIM, font=ctk.CTkFont(size=10))
-        self._speed_label.pack(padx=16, anchor="w")
-        
-        # Scan duration label (final)
-        self._scan_duration_label = ctk.CTkLabel(c, text="", text_color=TEXT_DIM, font=ctk.CTkFont(size=10))
-        self._scan_duration_label.pack(padx=16, anchor="w")
+        hero_inner = ctk.CTkFrame(hero, fg_color="transparent")
+        hero_inner.pack(fill="x", padx=24, pady=18)
 
-        s = ctk.CTkFrame(parent, fg_color="transparent")
-        s.pack(fill="x", pady=(0, 20))
+        ctk.CTkLabel(
+            hero_inner,
+            text="🧹 Smart Photo Cleaner",
+            font=ctk.CTkFont(size=22, weight="bold"),
+            text_color="white"
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            hero_inner,
+            text="Scan, identify, and remove duplicate & unwanted photos in seconds.",
+            font=ctk.CTkFont(size=12),
+            text_color="#93C5FD"
+        ).pack(anchor="w", pady=(4, 0))
+
+        # ── Folder Selection Panel ───────────────────────────────────────────
+        folder_panel = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=14)
+        folder_panel.pack(fill="both", pady=(0, 14), expand=True)
+
+        folder_header = ctk.CTkFrame(folder_panel, fg_color="transparent")
+        folder_header.pack(fill="x", padx=16, pady=(14, 6))
+        ctk.CTkLabel(folder_header, text="📁  Scan Target", font=ctk.CTkFont(size=13, weight="bold")).pack(side="left")
+        ctk.CTkLabel(folder_header, text="Add one or more folders or select individual files", font=ctk.CTkFont(size=10), text_color=TEXT_MUTED).pack(side="left", padx=(10, 0))
+
+        path_row = ctk.CTkFrame(folder_panel, fg_color="transparent")
+        path_row.pack(fill="x", padx=16, pady=(0, 10))
+
+        self._folder_entry = ctk.CTkEntry(
+            path_row, placeholder_text="No folder selected — click Browse or Select Files...",
+            height=36, font=ctk.CTkFont(size=12), state="readonly",
+            border_color=("#CBD5E1", "#334155")
+        )
+        self._folder_entry.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkButton(
+            path_row, text="📁  Browse", width=110, height=36,
+            fg_color=ACCENT, hover_color=("#1D4ED8", "#2563EB"),
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._select_folder
+        ).pack(side="left", padx=(8, 0))
+
+        ctk.CTkButton(
+            path_row, text="📄 Files", width=90, height=36,
+            fg_color=("#334155", "#334155"), hover_color="#475569",
+            font=ctk.CTkFont(size=12),
+            command=self._select_files
+        ).pack(side="left", padx=(6, 0))
+
+        self._folder_list_frame = ctk.CTkScrollableFrame(folder_panel, fg_color="transparent", height=80)
+        self._folder_list_frame.pack(fill="both", padx=16, pady=(0, 12), expand=True)
+        self._empty_folder_label = ctk.CTkLabel(
+            self._folder_list_frame,
+            text="No folders selected yet. Click Browse above to get started.",
+            text_color=TEXT_MUTED, font=ctk.CTkFont(size=11), justify="center"
+        )
+        self._empty_folder_label.pack(pady=10)
+
+        # ── Scan Controls & Progress ─────────────────────────────────────────
+        controls = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=14)
+        controls.pack(fill="x", pady=(0, 14))
+
+        btn_row = ctk.CTkFrame(controls, fg_color="transparent")
+        btn_row.pack(fill="x", padx=16, pady=(14, 10))
+
+        self._scan_btn = ctk.CTkButton(
+            btn_row, text="🔍  Scan Photos", width=155, height=44,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=("#2563EB", "#3B82F6"), hover_color=("#1D4ED8", "#2563EB"),
+            command=self._start_photo_scan, state="disabled"
+        )
+        self._scan_btn.pack(side="left")
+
+        self._scan_videos_btn = ctk.CTkButton(
+            btn_row, text="🎞️  Scan Videos", width=155, height=44,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=("#7C3AED", "#8B5CF6"), hover_color=("#6D28D9", "#7C3AED"),
+            command=self._start_video_scan, state="disabled"
+        )
+        self._scan_videos_btn.pack(side="left", padx=(10, 0))
+
+        self._cancel_btn = ctk.CTkButton(
+            btn_row, text="✕  Cancel", width=110, height=36,
+            font=ctk.CTkFont(size=12),
+            fg_color=("#7F1D1D", "#7F1D1D"), hover_color="#991B1B",
+            command=self._cancel_scan, state="disabled"
+        )
+        self._cancel_btn.pack(side="left", padx=(10, 0))
+
+        self._refresh_btn = ctk.CTkButton(
+            btn_row, text="↺  Re-Scan", height=36, width=110,
+            font=ctk.CTkFont(size=12),
+            fg_color=("#334155", "#334155"), hover_color="#475569",
+            command=lambda: self._start_scan(self._settings.mode, force_rescan=True),
+            state="disabled"
+        )
+        self._refresh_btn.pack(side="left", padx=(6, 0))
+
+        # Progress area
+        prog_frame = ctk.CTkFrame(controls, fg_color=("#F8FAFC", "#0F172A"), corner_radius=10)
+        prog_frame.pack(fill="x", padx=16, pady=(0, 14))
+
+        prog_top = ctk.CTkFrame(prog_frame, fg_color="transparent")
+        prog_top.pack(fill="x", padx=14, pady=(10, 4))
+
+        self._status_label = ctk.CTkLabel(
+            prog_top, text="Select a folder to begin scanning.",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_MUTED, anchor="w"
+        )
+        self._status_label.pack(side="left", fill="x", expand=True)
+
+        self._elapsed_label = ctk.CTkLabel(
+            prog_top, text="", font=ctk.CTkFont(size=11),
+            text_color=TEXT_DIM, anchor="e"
+        )
+        self._elapsed_label.pack(side="right")
+
+        self._progress_bar = ctk.CTkProgressBar(
+            prog_frame, height=10, mode="determinate",
+            progress_color=("#3B82F6", "#60A5FA"),
+            fg_color=("#E2E8F0", "#1E293B")
+        )
+        self._progress_bar.pack(fill="x", padx=14, pady=(0, 6))
+        self._progress_bar.set(0)
+
+        prog_bottom = ctk.CTkFrame(prog_frame, fg_color="transparent")
+        prog_bottom.pack(fill="x", padx=14, pady=(0, 10))
+
+        self._progress_details_label = ctk.CTkLabel(
+            prog_bottom, text="", font=ctk.CTkFont(size=10), text_color=TEXT_DIM, anchor="w"
+        )
+        self._progress_details_label.pack(side="left")
+
+        self._speed_label = ctk.CTkLabel(
+            prog_bottom, text="", font=ctk.CTkFont(size=10), text_color=TEXT_DIM, anchor="center"
+        )
+        self._speed_label.pack(side="left", padx=(14, 0))
+
+        self._scan_duration_label = ctk.CTkLabel(
+            prog_bottom, text="", font=ctk.CTkFont(size=10), text_color=TEXT_DIM, anchor="e"
+        )
+        self._scan_duration_label.pack(side="right")
+
+        # Hidden labels (kept for backward compat but not rendered prominently)
+        self._eta_label = ctk.CTkLabel(prog_frame, text="", font=ctk.CTkFont(size=10), text_color=TEXT_DIM)
+
+        # ── Scan Overview Stats ──────────────────────────────────────────────
+        stats_section = ctk.CTkFrame(parent, fg_color="transparent")
+        stats_section.pack(fill="x", pady=(0, 4))
+
+        section_hdr = ctk.CTkFrame(stats_section, fg_color="transparent")
+        section_hdr.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(
+            section_hdr, text="📊  Scan Overview",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(side="left")
+
+        stats_frame_top = ctk.CTkFrame(stats_section, fg_color="transparent")
+        stats_frame_top.pack(fill="x", pady=(0, 8))
+
+        stats_frame_bottom = ctk.CTkFrame(stats_section, fg_color="transparent")
+        stats_frame_bottom.pack(fill="x")
+
+        self._stat_found     = self._stat_card_v2(stats_frame_top, "🖼", "Images Scanned",      "—",     "#3B82F6")
+        self._stat_prefilter = self._stat_card_v2(stats_frame_top, "⚡", "Pre-filter Saved",     "—",     "#8B5CF6")
+        self._stat_dupes     = self._stat_card_v2(stats_frame_top, "🔁", "Duplicate Groups",     "—",     "#EF4444")
+        self._stat_waste     = self._stat_card_v2(stats_frame_top, "💾", "Reclaimable Space",    "—",     "#F59E0B")
+        self._stat_selected  = self._stat_card_v2(stats_frame_bottom, "✓",  "Selected Items",       "0",     "#10B981")
+        self._stat_deleted_count = self._stat_card_v2(stats_frame_bottom, "🗑", "Deleted (Session)", "0",     "#DC2626")
+        self._stat_space_saved   = self._stat_card_v2(stats_frame_bottom, "✨", "Space Saved",      "0 MB",  "#16A34A")
+
+
+
+    def _build_settings(self, parent):
+        ctk.CTkLabel(parent, text="Settings", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", pady=(10, 20))
         
-        # Grid for stats (2 rows, 4 columns)
-        for col in range(4):
-            s.grid_columnconfigure(col, weight=1)
-            
-        self._stat_found = self._stat_card_grid(s, "Total Scanned", "0", 0, 0)
-        self._stat_unique = self._stat_card_grid(s, "Unique Files", "0", 0, 1)
-        self._stat_dupes = self._stat_card_grid(s, "Duplicate Groups", "0", 0, 2)
-        self._stat_extra_copies = self._stat_card_grid(s, "Extra copies", "0", 0, 3)
+        panel = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12)
+        panel.pack(fill="x", pady=(0, 20), ipady=10)
         
-        self._stat_waste = self._stat_card_grid(s, "Reclaimable", "0 MB", 1, 0)
-        self._stat_prefilter = self._stat_card_grid(s, "Prefilter saved", "0", 1, 1)
-        self._stat_selected = self._stat_card_grid(s, "Selected", "0", 1, 2)
-        # Empty space or another stat in 1,3
+        # Similarity slider
+        ctk.CTkLabel(panel, text="Similarity Threshold (Hamming distance)", font=ctk.CTkFont(size=12, weight="bold"), text_color="white").pack(anchor="w", padx=20, pady=(20, 0))
+        ctk.CTkLabel(panel, text="Higher values group more photos together as 'similar'. 0 means exact identical images only.", font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(anchor="w", padx=20)
         
-        ds = ctk.CTkFrame(parent, fg_color="transparent")
-        ds.pack(fill="x", pady=20)
-        self._stat_deleted_count = self._stat_card(ds, "Deleted (Session)", "0")
-        self._stat_space_saved = self._stat_card(ds, "Space Saved (Session)", "0 MB")
+        slider_row = ctk.CTkFrame(panel, fg_color="transparent")
+        slider_row.pack(fill="x", padx=20, pady=(10, 10))
+        
+        self._tol_label = ctk.CTkLabel(slider_row, text="0  (Exact only)", font=ctk.CTkFont(size=11, weight="bold"), text_color=ACCENT, width=140)
+        self._tol_label.pack(side="right")
+        
+        self._tol_slider = ctk.CTkSlider(slider_row, from_=0, to=10, number_of_steps=10, command=self._on_slider_change)
+        self._tol_slider.set(0)
+        self._tol_slider.pack(side="left", fill="x", expand=True)
+
+        # Prefilter toggle
+        ctk.CTkLabel(panel, text="Advanced", font=ctk.CTkFont(size=12, weight="bold"), text_color="white").pack(anchor="w", padx=20, pady=(20, 0))
+        self._prefilter_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            panel, text="MD5 pre-filter (skip hashing byte-identical files for faster scans)",
+            variable=self._prefilter_var, font=ctk.CTkFont(size=11), text_color=TEXT_MUTED, command=self._sync_settings
+        ).pack(anchor="w", padx=20, pady=(10, 20))
+
 
     def _stat_card_grid(self, p, l, v, row, col):
         f = ctk.CTkFrame(p, fg_color=BG_CARD, corner_radius=10)
@@ -373,24 +528,21 @@ class SmartPhotoCleanerApp(ctk.CTk):
         val = ctk.CTkLabel(f, text=v, font=ctk.CTkFont(size=18, weight="bold")); val.pack(pady=(0, 8))
         return val
 
+    def _stat_card_v2(self, p, icon: str, label: str, value: str, accent_color: str):
+        """Modern stat card with colored icon badge, label and value."""
+        f = ctk.CTkFrame(p, fg_color=BG_CARD, corner_radius=12)
+        f.pack(side="left", padx=4, fill="both", expand=True)
+        # Top accent line
+        top = ctk.CTkFrame(f, fg_color=accent_color, corner_radius=0, height=3)
+        top.pack(fill="x")
+        # Icon
+        ctk.CTkLabel(f, text=icon, font=ctk.CTkFont(size=20), text_color=accent_color).pack(pady=(10, 0))
+        # Value (large bold)
+        val = ctk.CTkLabel(f, text=value, font=ctk.CTkFont(size=20, weight="bold"))
+        val.pack(pady=(2, 0))
+        # Label (small muted)
+        ctk.CTkLabel(f, text=label, font=ctk.CTkFont(size=9), text_color=TEXT_MUTED).pack(pady=(0, 10))
         return val
-
-    def _build_settings(self, parent):
-        panel = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12)
-
-        panel = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12)
-        panel.pack(fill="x", pady=(0, 20), ipady=10)
-
-        # Prefilter toggle
-        adv_row = ctk.CTkFrame(panel, fg_color="transparent")
-        adv_row.pack(fill="x", padx=20, pady=(20, 0))
-        ctk.CTkLabel(adv_row, text="Advanced", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_BLACK).pack(side="left")
-        ctk.CTkButton(adv_row, text="?", width=30, height=20, font=ctk.CTkFont(size=10), command=self._show_md5_help).pack(side="right")
-        self._prefilter_var = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(
-            panel, text="MD5 pre-filter (skip hashing byte-identical files for faster scans)",
-            variable=self._prefilter_var, font=ctk.CTkFont(size=11), text_color=TEXT_MUTED, command=self._sync_settings
-        ).pack(anchor="w", padx=20, pady=(10, 20))
 
     def _build_compressor_tab(self, parent):
         # File/Folder selection panel
@@ -457,13 +609,69 @@ class SmartPhotoCleanerApp(ctk.CTk):
         ctk.CTkLabel(self._compress_output, text="Compression results will appear here.", text_color=TEXT_MUTED, font=ctk.CTkFont(size=11)).pack(pady=20)
 
 
+    # ── Multi-folder helpers ────────────────────────────────────────────────
+
+    def _add_folder(self):
+        """Open a directory chooser and add the selected folder to the list."""
+        f = filedialog.askdirectory(title="Add Folder to Scan")
+        if f and f not in self._folder_paths:
+            self._folder_paths.append(f)
+            self._selected_files_list = None
+            self._refresh_folder_list_ui()
+            self._update_folder_entry()
+            self._scan_btn.configure(state="normal")
+            self._scan_videos_btn.configure(state="normal")
+            self._status_label.configure(text=f"Ready! {len(self._folder_paths)} folder(s) selected.", text_color="#10B981")
+            self.update_idletasks()
+
+    def _remove_folder(self, folder_path: str):
+        """Remove a single folder from the list."""
+        if folder_path in self._folder_paths:
+            self._folder_paths.remove(folder_path)
+        self._refresh_folder_list_ui()
+        self._update_folder_entry()
+        if not self._folder_paths and not self._selected_files_list:
+            self._scan_btn.configure(state="disabled")
+            self._scan_videos_btn.configure(state="disabled")
+
+    def _clear_folders(self):
+        """Remove all folders from the list."""
+        self._folder_paths.clear()
+        self._refresh_folder_list_ui()
+        self._update_folder_entry()
+        if not self._selected_files_list:
+            self._scan_btn.configure(state="disabled")
+            self._scan_videos_btn.configure(state="disabled")
+
+    def _refresh_folder_list_ui(self):
+        """Redraw the folder list inside the scrollable frame."""
+        # Destroy old row widgets
+        for (fr, *_) in self._folder_row_widgets:
+            fr.destroy()
+        self._folder_row_widgets.clear()
+
+        if not self._folder_paths:
+            self._empty_folder_label.pack(pady=10)
+            return
+
+        self._empty_folder_label.pack_forget()
+        for fp in self._folder_paths:
+            row = ctk.CTkFrame(self._folder_list_frame, fg_color="#1E3A5F", corner_radius=6, height=40)
+            row.pack(fill="x", pady=4, padx=4)
+            lbl = ctk.CTkLabel(row, text=fp, font=ctk.CTkFont(size=11),
+                               text_color="white", anchor="w")
+            lbl.pack(side="left", padx=8, pady=6, fill="both", expand=True)
+            remove_btn = ctk.CTkButton(
+                row, text="✕", width=28, height=24,
+                fg_color=DANGER, hover_color="#B91C1C",
+                command=lambda p=fp: self._remove_folder(p)
+            )
+            remove_btn.pack(side="right", padx=6, pady=6)
+            self._folder_row_widgets.append((row, lbl, remove_btn))
+
+    # Keep old _select_folder as an alias so tab-initiated scans still work
     def _select_folder(self):
-        f = filedialog.askdirectory()
-        if f:
-            self._folder_path = f
-            self._selected_files_list = None  # Clear any file selection
-            self._folder_entry.configure(state="normal"); self._folder_entry.delete(0, "end"); self._folder_entry.insert(0, f); self._folder_entry.configure(state="readonly", border_color=("gray70", "gray30")) # Reset border
-            self._scan_btn.configure(state="normal"); self._scan_videos_btn.configure(state="normal")
+        self._add_folder()
 
     def _select_files(self):
         files = filedialog.askopenfilenames(
@@ -472,15 +680,33 @@ class SmartPhotoCleanerApp(ctk.CTk):
         )
         if files:
             self._selected_files_list = list(files)
-            self._folder_path = None
-            self._folder_entry.configure(
-                state="normal"
+            self._folder_paths.clear()
+            self._refresh_folder_list_ui()
+            self._update_folder_entry()
+            # Show a summary label inside the list frame
+            self._empty_folder_label.configure(
+                text=f"{len(files)} individual file(s) selected for scanning."
             )
-            self._folder_entry.delete(0, "end")
-            self._folder_entry.insert(0, f"{len(files)} files selected")
-            self._folder_entry.configure(state="readonly", border_color=("gray70", "gray30")) # Reset border
+            self._empty_folder_label.pack(pady=10)
             self._scan_btn.configure(state="normal")
             self._scan_videos_btn.configure(state="normal")
+            self._status_label.configure(text=f"Ready! {len(files)} file(s) selected.", text_color="#10B981")
+            self.update_idletasks()
+
+    def _update_folder_entry(self):
+        if self._selected_files_list:
+            label = f"{len(self._selected_files_list)} file(s) selected"
+        elif len(self._folder_paths) == 1:
+            label = self._folder_paths[0]
+        elif self._folder_paths:
+            label = f"{len(self._folder_paths)} folders selected"
+        else:
+            label = ""
+
+        self._folder_entry.configure(state="normal")
+        self._folder_entry.delete(0, "end")
+        self._folder_entry.insert(0, label)
+        self._folder_entry.configure(state="readonly")
 
     def _start_photo_scan(self): self._start_scan("full")
     def _start_video_scan(self): self._start_scan("videos")
@@ -495,21 +721,32 @@ class SmartPhotoCleanerApp(ctk.CTk):
         self.select_frame_by_name("Dashboard")
         self._start_scan(mode)
 
-    def _start_scan(self, mode: str):
-        # Validation: Ensure folder or files are selected
-        if not self._folder_path and not self._selected_files_list:
-            self._folder_entry.configure(border_color=DANGER)
-            messagebox.showwarning("No Input", "Please select a folder or files before starting the scan.")
+    def _start_scan(self, mode: str, force_rescan: bool = False):
+        # Validation: Ensure at least one folder or some files are selected
+        if not self._folder_paths and not self._selected_files_list:
+            entry_path = getattr(self, '_folder_entry', None)
+            if entry_path:
+                fallback_path = self._folder_entry.get().strip()
+                if fallback_path and os.path.isdir(fallback_path):
+                    self._folder_paths.append(fallback_path)
+                    self._update_folder_entry()
+
+        if not self._folder_paths and not self._selected_files_list:
+            messagebox.showwarning("No Input", "Please add at least one folder or select files before scanning.")
             return
 
-        # NEW: Instant re-detection if we already have hashes and only tolerance changed
-        if mode == "similar" and hasattr(self, "_last_h_map") and self._last_h_map:
+        # Show the user that scanning has begun before the worker thread starts
+        self._set_status("Preparing file discovery...", SUCCESS)
+        self._progress_details_label.configure(text="Scanning selected files..." if self._selected_files_list else "Scanning selected folders...")
+        self._progress_bar.set(0.0)
+
+        # NEW: Instant re-detection if we already have hashes and only tolerance changed (slider)
+        if mode == "similar" and not force_rescan and hasattr(self, "_last_h_map") and self._last_h_map:
             log.info("Performing instant re-detection based on existing hashes...")
             self._set_scanning_ui(True)
             self._set_status("Updating similarity results...", SUCCESS)
             
             def _quick_detect():
-                t0 = time.perf_counter()
                 det = detect_duplicates(
                     self._last_h_map, 
                     hash_tolerance=self._settings.tolerance,
@@ -534,25 +771,48 @@ class SmartPhotoCleanerApp(ctk.CTk):
         self._scan_duration_label.configure(text="")
         s = ScanSettings(); s.tolerance = self._settings.tolerance; s.use_prefilter = self._prefilter_var.get()
         s.mode = mode
-        if mode == "videos": 
+        if mode == "similar":
+            # Optimized 'Similar only' scan: ignore docs/videos if not needed
+            # (Though user might want similar videos too, usually they mean photos)
+            s.target_extensions = IMAGE_EXTENSIONS
+            s.do_duplicates = True
+            s.do_metadata = False # Skip heavy metadata if just looking for similarity
+        elif mode == "videos": 
             s.target_extensions = VIDEO_EXTENSIONS
             s.use_prefilter = True  # FIX: Enable MD5 for videos too!
+            s.do_duplicates = True
+            s.do_metadata = True
         else: 
-            s.target_extensions = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
-        threading.Thread(target=self._scan_worker, args=(s,), daemon=True).start()
+            s.target_extensions = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS | VIDEO_EXTENSIONS
+            s.do_duplicates = True
+            s.do_metadata = True
+
+        self._settings = s
+
+        if self._selected_files_list:
+            self._set_status(f"Scanning {len(self._selected_files_list)} selected file(s)...", SUCCESS)
+            self._progress_details_label.configure(text="Scanning selected files...")
+        else:
+            self._set_status(f"Scanning {len(self._folder_paths)} folder(s)...", SUCCESS)
+            self._progress_details_label.configure(text="Scanning selected folders...")
+
+        self._scan_thread = threading.Thread(target=self._scan_worker, args=(s,), daemon=True)
+        self._scan_thread.start()
 
     def _pause_resume_scan(self):
         if self._is_paused:
             # Resume
             self._pause_event.set()
             self._is_paused = False
-            self._pause_btn.configure(text="⏸ Pause", fg_color="#F59E0B")
+            pause_btn = self.__dict__.get('_pause_btn')
+            if pause_btn: pause_btn.configure(text="⏸ Pause", fg_color="#F59E0B")
             self._set_status("Resuming scan...", SUCCESS)
         else:
             # Pause
             self._pause_event.clear()
             self._is_paused = True
-            self._pause_btn.configure(text="▶ Resume", fg_color="#10B981")
+            pause_btn = self.__dict__.get('_pause_btn')
+            if pause_btn: pause_btn.configure(text="▶ Resume", fg_color="#10B981")
             self._set_status("Scan paused", WARN)
 
     def _cancel_scan(self): 
@@ -567,65 +827,118 @@ class SmartPhotoCleanerApp(ctk.CTk):
             if self._cancel_event.is_set():
                 self._push("status", "Scan cancelled", 0, True, "")
                 return
-            
-            # 1. Scanning — either a full folder or a selected file list
-            self._push("status", "Listing files...", 0.05, False, "")
+
+            # ── STAGE 1: File Discovery (0% → 5%) ──────────────────────────
+            self._push("status", "Listing files...", 0.01, False, "")
 
             if self._selected_files_list:
                 res = scan_files(self._selected_files_list)
-                self._push("status", f"Loaded {res.image_count} selected files.", 0.15, False, "")
             else:
                 def scan_progress(count, current_path, total_scanned):
-                    if self._cancel_event.is_set():
-                        raise Exception("Scan cancelled")
-                    # periodically update with total scanned count for speed calculation
-                    if total_scanned % 50 == 0:
-                        self._push("status", f"Scanning: found {count} media files...", 0.1, False, total_scanned)
-                res = scan_folder(self._folder_path, recursive=True, progress_callback=scan_progress, cancel_event=self._cancel_event)
-            
-            # PUSH PARTIAL RESULTS TO DASHBOARD
-            self._push("partial_count", str(res.image_count), 0.15, False, "")
-            
-            # Check for cancellation after scanning
-            if self._cancel_event.is_set():
-                self._push("status", "Scan cancelled", 0, True, "")
-                return
-            
-            # 2. Hashing (Images, Videos, and Documents)
-            self._push("status", "Preparing for hashing...", 0.2, False, "")
-            
-            exact_groups = []
-            if settings.use_prefilter:
-                self._push("status", "Pre-filtering exact duplicates...", 0.18, False, "")
-                exact_groups, all_files_to_hash = find_exact_byte_duplicates(res.size_candidate_groups)
-                # CRITICAL FIX: To find near-duplicates of exact files, we MUST hash at least one member of each exact group
-                for group in exact_groups:
-                    if group: all_files_to_hash.append(group[0])
-            else:
-                all_files_to_hash = [f.path for f in res.images]
-            
-            def hash_progress(done, total):
-                if self._cancel_event.is_set():
-                    raise Exception("Scan cancelled")
-                # Wait for pause/resume
-                self._pause_event.wait()
-                if done % 10 == 0 or done == total:
-                    pct = 0.2 + (done / total) * 0.6  # Mapping 0-100% to 0.2-0.8 on bar
-                    self._push("status", f"Scanned: {done} / {total} files", pct, False, done)
+                    if self._cancel_event.is_set(): raise Exception("Scan cancelled")
+                    if total_scanned == 1 or total_scanned % 10 == 0 or total_scanned == 0:
+                        pct = min(0.05, 0.01 + (total_scanned / 500) * 0.04)
+                        self._push("status", f"Scanning: found {total_scanned} media files...", pct, False, total_scanned)
+                res = scan_folders(self._folder_paths, progress_callback=scan_progress,
+                                   recursive=True, cancel_event=self._cancel_event)
 
-            h_map = generate_hashes(all_files_to_hash, progress_callback=hash_progress, cancel_event=self._cancel_event)
-            
-            # Check for cancellation after hashing
-            if self._cancel_event.is_set():
-                self._push("status", "Scan cancelled", 0, True, "")
-                return
-            
-            # 3. Detection
-            self._push("status", "Finding duplicates...", 0.9, False, "")
-            detection = detect_duplicates(h_map, hash_tolerance=settings.tolerance, exact_byte_dupes=exact_groups, all_images=res.images, folder_sizes=dict(res.folder_sizes), mode=settings.mode)
-            
+            total_files = res.image_count
+            self._push("partial_count", str(total_files), 0.05, False, "")
+            if self._cancel_event.is_set(): return
+
+            # Build stat_map from scanner results for cache speedup
+            stat_map = {img.path: (img.timestamp, img.size_bytes) for img in res.images}
+
+            # ── STAGE 2: MD5 Pre-filter (5% → 25%) ─────────────────────────
+            self._push("status", "Starting MD5 pre-filter...", 0.06, False, "")
+
+            singleton_paths = res.size_singleton_paths
+            candidate_groups = res.size_candidate_groups
+
+            exact_groups = []
+            md5_survivors = []
+
+            if candidate_groups:
+                def prefilter_progress(done, total, phase=1):
+                    if phase == 1:
+                        pct = 0.05 + (done / max(total, 1)) * 0.10  # 5% → 15%
+                    else:
+                        pct = 0.15 + (done / max(total, 1)) * 0.10  # 15% → 25%
+                    msg = f"Pre-filter phase {phase}: {done}/{total}"
+                    self._push("status", msg, pct, False, done)
+
+                exact_groups, md5_survivors = find_exact_byte_duplicates(
+                    candidate_groups,
+                    progress_callback=prefilter_progress,
+                    cancel_event=self._cancel_event,
+                    stat_map=stat_map,
+                )
+
+                # Push exact-byte duplicate groups to UI immediately (lightweight)
+                if exact_groups:
+                    from duplicate_detector import _exact_byte_groups_to_duplicate_groups, DetectionResult
+                    byte_groups = _exact_byte_groups_to_duplicate_groups(exact_groups)
+                    partial_det = DetectionResult(
+                        groups=byte_groups,
+                        total_images_checked=total_files,
+                        unique_images=total_files - sum(len(g) - 1 for g in exact_groups),
+                        prefilter_exact_count=sum(len(g) for g in exact_groups),
+                    )
+                    self._push("switch_tab", "Duplicates", 0.25, False)
+                    self._push("update_results", partial_det, 0.25, False)
+            else:
+                md5_survivors = []
+
+            if self._cancel_event.is_set(): return
+
+            # ── STAGE 3: Perceptual Hashing (25% → 90%) ────────────────────
+            # Combine all paths that need phashing
+            paths_to_hash = list(singleton_paths) + list(md5_survivors)
+            # Also hash one representative from each exact group (for Similar Photos)
+            for group in exact_groups:
+                if group:
+                    paths_to_hash.append(group[0])
+
+            # Deduplicate
+            paths_to_hash = list(dict.fromkeys(paths_to_hash))
+
+            h_map = {}
+            if paths_to_hash:
+                total_to_hash = len(paths_to_hash)
+                def phash_progress(done, total):
+                    pct = 0.25 + (done / max(total, 1)) * 0.65  # 25% → 90%
+                    if done % 500 == 0 or done == total:
+                        self._push("status", f"Hashing: {done}/{total}", pct, False, done)
+                    elif done % 50 == 0:
+                        self._push("status", f"Hashing: {done}/{total}", pct, False, done)
+
+                h_map = generate_hashes(
+                    paths_to_hash,
+                    progress_callback=phash_progress,
+                    cancel_event=self._cancel_event,
+                    stat_map=stat_map,
+                )
+
+            if self._cancel_event.is_set(): return
+
+            # ── STAGE 4: Final Detection & Grouping (90% → 100%) ───────────
+            self._push("status", "Building duplicate groups...", 0.92, False, "")
+            final_det = detect_duplicates(
+                h_map,
+                hash_tolerance=settings.tolerance,
+                exact_byte_dupes=exact_groups,
+                all_images=res.images,
+                folder_sizes=dict(res.folder_sizes),
+                mode=settings.mode
+            )
+
+            # Store for instant re-detection on slider change
+            self._last_h_map = h_map
+            self._last_exact_groups = exact_groups
+
             self._push("status", "Scan complete!", 1.0, False, "")
-            self._push_done(detection)
+            self._progress_queue.put(("done", final_det, 1.0, False, ""))
+
         except Exception as e:
             error_msg = str(e)
             if "cancelled" in error_msg.lower():
@@ -633,7 +946,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
             else:
                 log.exception("Scan worker failed")
                 self._push("status", f"Error: {error_msg}", 0, True, "")
-            self._push_done(None)
+            self._progress_queue.put(("done", None, 0, True, ""))
 
     def _push(self, k, m, f, e, s=None): 
         # k: key, m: msg, f: fraction, e: is_error, s: count/status
@@ -663,8 +976,18 @@ class SmartPhotoCleanerApp(ctk.CTk):
                     m = self._progress_queue.get_nowait()
                     if m[0] == "status":
                         self._status_label.configure(text=m[1])
-                        if m[2] is not False and float(m[2]) > 0:
+                        if m[2] is not False and float(m[2]) >= 0:
                             self._progress_bar.set(m[2])
+                        details = []
+                        if m[2] is not False and isinstance(m[2], (float, int)):
+                            details.append(f"{int(float(m[2]) * 100)}%")
+                        if m[4] not in (None, ""):
+                            try:
+                                count = int(float(m[4]))
+                                details.append(f"{count} files scanned")
+                            except Exception:
+                                pass
+                        self._progress_details_label.configure(text=" · ".join(details) if details else m[1] or "Scanning...")
                         try:
                             if self._is_scanning and self._scan_start_time and m[4]:
                                 elapsed = time.perf_counter() - self._scan_start_time
@@ -674,6 +997,12 @@ class SmartPhotoCleanerApp(ctk.CTk):
                         except Exception:
                             pass
                     elif m[0] == "partial_count":
+                        self._stat_found.configure(text=m[1])
+                        self._progress_bar.set(m[2])
+                        if m[2] is not False and isinstance(m[2], (float, int)):
+                            self._progress_details_label.configure(text=f"{int(float(m[2]) * 100)}% discovered")
+                        else:
+                            self._progress_details_label.configure(text="Files discovered")
                         self._stat_found.configure(text=m[1])
                         self._progress_bar.set(m[2])
                         # Update elapsed timer every tick
@@ -691,10 +1020,16 @@ class SmartPhotoCleanerApp(ctk.CTk):
                                 pass
 
                         # Update button states based on pause status
-                        if self._is_paused:
-                            self._pause_btn.configure(text="▶ Resume", fg_color="#10B981")
-                        else:
-                            self._pause_btn.configure(text="⏸ Pause", fg_color="#F59E0B")
+                        pause_btn = self.__dict__.get('_pause_btn')
+                        if pause_btn:
+                            if self._is_paused:
+                                pause_btn.configure(text="▶ Resume", fg_color="#10B981")
+                            else:
+                                pause_btn.configure(text="⏸ Pause", fg_color="#F59E0B")
+                    elif m[0] == "switch_tab":
+                        self.select_frame_by_name(m[1])
+                    elif m[0] == "update_results":
+                        self._render_results(m[1], is_partial=True)  # noqa: ok
                     elif m[0] == "done":
                         # final stats
                         self._is_scanning = False; self._is_paused = False
@@ -702,395 +1037,116 @@ class SmartPhotoCleanerApp(ctk.CTk):
                         break
                 except queue.Empty:
                     break
+                except Exception as loop_err:
+                    import logging
+                    logging.getLogger(__name__).error("Error in _poll_progress loop: %s", loop_err, exc_info=True)
         except queue.Empty: pass
-        self.after(60, self._poll_progress)
+        self.after(150, self._poll_progress)
 
-    def _render_results(self, det):
-        # keep result for potential cached navigations
-        log.info(f"Rendering scan results: {det.total_images_checked} checked, {det.duplicate_group_count} groups found")
-        self._detection_result = det
+    def _render_results(self, detection: DetectionResult, is_partial: bool = False):
         self._clear_results()
-        self._stat_found.configure(text=str(det.total_images_checked))
-        self._stat_dupes.configure(text=str(det.duplicate_group_count))
-        self._stat_waste.configure(text=f"{det.total_wasted_mb():.1f} MB")
-        
-        # Reset pagination states
-        self._render_state = {
-            "exact": {"index": 0, "groups": [g for g in det.groups if g.match_type == "exact_bytes"]},
-            "similar": {"index": 0, "groups": [g for g in det.groups if g.match_type in ("near_duplicate", "exact_hash")]},
-            "screenshots": {"index": 0, "items": det.screenshots},
-            "blurry": {"index": 0, "items": det.blurry_photos},
-            "large": {"index": 0, "items": det.large_files},
-            "messages": {"index": 0, "items": det.whatsapp_media + det.telegram_media},
-            "timeline": {"year_idx": 0, "photo_idx": 0, "items": list(det.timeline.items()) if det.timeline else []}
-        }
 
-        # Render first batch for all with error isolation
-        render_tasks = [
-            ("Duplicates", 20),
-            ("Similar Photos", 20),
-            ("Screenshots", 20),
-            ("Blurry Photos", 20),
-            ("Large Files", 20),
-            ("Messages Media", 80),
-            ("Timeline Viewer", 5)
-        ]
-        
-        for tab, size in render_tasks:
-            try:
-                self._render_next_batch(tab, size)
-            except Exception:
-                log.exception(f"Failed to render initial batch for {tab}")
+        self._stat_found.configure(text=f"{detection.total_images_checked:,}")
+        saved = detection.prefilter_exact_count
+        self._stat_prefilter.configure(text=f"{saved:,}" if saved > 0 else "—")
+        self._stat_dupes.configure(text=str(detection.duplicate_group_count))
+        waste_mb = detection.total_wasted_mb()
+        self._stat_waste.configure(text=f"{waste_mb:.1f} MB")
+        self._stat_selected.configure(text="0")
 
-        # Update stats
-        extra_copies = sum(g.count - 1 for g in det.groups)
-        self._stat_extra_copies.configure(text=str(extra_copies))
-        self._stat_prefilter.configure(text=str(getattr(det, "prefilter_exact_count", 0)))
+        exact_groups = [g for g in detection.groups if g.match_type in ("exact_bytes", "exact_hash")]
+        similar_groups = [g for g in detection.groups if g.match_type == "near_duplicate"]
+
+        if not exact_groups:
+            ctk.CTkLabel(self._scroll_exact, text="✅  No exact duplicates found!", font=ctk.CTkFont(size=15), text_color=SUCCESS, justify="center").pack(expand=True, pady=60)
+        else:
+            for group in exact_groups:
+                card = DuplicateGroupCard(self._scroll_exact, group, thumb_cache=self._thumb_cache, on_selection_change=self._update_selected_count)
+                card.pack(fill="x", padx=8, pady=(0, 10))
+                self._exact_group_cards.append(card)
+
+        if not similar_groups:
+            ctk.CTkLabel(self._scroll_similar, text="✅  No similar photos found!", font=ctk.CTkFont(size=15), text_color=SUCCESS, justify="center").pack(expand=True, pady=60)
+        else:
+            for group in similar_groups:
+                card = DuplicateGroupCard(self._scroll_similar, group, thumb_cache=self._thumb_cache, on_selection_change=self._update_selected_count)
+                card.pack(fill="x", padx=8, pady=(0, 10))
+                self._similar_group_cards.append(card)
+
+        if detection.screenshots:
+            card = FileGridCard(self._scroll_screenshots, "Screenshots", detection.screenshots, self._thumb_cache, self._update_selected_count)
+            card.pack(fill="x", padx=8, pady=(0, 10))
+            self._screenshot_cards.append(card)
+        else:
+            ctk.CTkLabel(self._scroll_screenshots, text="✅  No screenshots found!", font=ctk.CTkFont(size=15), text_color=SUCCESS, justify="center").pack(expand=True, pady=60)
+
+        if detection.blurry_photos:
+            card = FileGridCard(self._scroll_blurry, "Blurry Photos", detection.blurry_photos, self._thumb_cache, self._update_selected_count)
+            card.pack(fill="x", padx=8, pady=(0, 10))
+            self._blurry_cards.append(card)
+        else:
+            ctk.CTkLabel(self._scroll_blurry, text="✅  No blurry photos found!", font=ctk.CTkFont(size=15), text_color=SUCCESS, justify="center").pack(expand=True, pady=60)
+
+        if detection.large_files:
+            card = FileGridCard(self._scroll_large, "Large Files (>2MB)", detection.large_files, self._thumb_cache, self._update_selected_count)
+            card.pack(fill="x", padx=8, pady=(0, 10))
+            self._large_cards.append(card)
+        else:
+            ctk.CTkLabel(self._scroll_large, text="✅  No large files found!", font=ctk.CTkFont(size=15), text_color=SUCCESS, justify="center").pack(expand=True, pady=60)
+
+        chat_media = list(getattr(detection, "whatsapp_media", [])) + list(getattr(detection, "telegram_media", []))
+        if chat_media:
+            card = FileGridCard(self._scroll_messages, "Messages Media", chat_media, self._thumb_cache, self._update_selected_count)
+            card.pack(fill="x", padx=8, pady=(0, 10))
+            self._message_cards.append(card)
+        else:
+            ctk.CTkLabel(self._scroll_messages, text="✅  No message media found!", font=ctk.CTkFont(size=15), text_color=SUCCESS, justify="center").pack(expand=True, pady=60)
+
+        if detection.timeline:
+            timeline_files = [path for year in sorted(detection.timeline.keys(), reverse=True) for path in detection.timeline[year]]
+            card = FileGridCard(self._scroll_timeline, "Timeline Viewer", timeline_files, self._thumb_cache, self._update_selected_count)
+            card.pack(fill="x", padx=8, pady=(0, 10))
+            self._timeline_cards.append(card)
+        else:
+            ctk.CTkLabel(self._scroll_timeline, text="✅  No timeline items available yet!", font=ctk.CTkFont(size=15), text_color=SUCCESS, justify="center").pack(expand=True, pady=60)
 
         self._select_all_btn.configure(state="normal")
+        self._refresh_btn.configure(state="normal")
         self._quick_clean_btn.configure(state="normal")
-        self._compress_btn.configure(state="normal")
-        
-        # Dashboard Sync: Ensure stats are updated after scan
-        self._refresh_dashboard_stats()
-        self._update_global_dashboard_stats()
-        
-        # Update tab counts
-        self._update_tab_titles()
 
-    def _on_tab_scroll(self, tab_name: str):
-        """Infinite scroll handler."""
-        attr = {
-            "Duplicates": "_scroll_exact", "Similar Photos": "_scroll_similar",
-            "Screenshots": "_scroll_screenshots", "Messages Media": "_scroll_messages",
-            "Blurry Photos": "_scroll_blurry", "Large Files": "_scroll_large",
-            "Timeline Viewer": "_scroll_timeline"
-        }.get(tab_name)
-        
-        if not attr: return
-        scroll = getattr(self, attr)
-        
-        # Get scroll fraction
-        y_fraction = scroll._parent_canvas.yview()
-        if y_fraction[1] > 0.70: # Reached 70% of the way down (Early preload)
-            # Skip auto-load for Messages Media and Timeline if we want manual "Next Page"
-            if tab_name not in ["Messages Media", "Timeline Viewer"]:
-                self._render_next_batch(tab_name)
-
-    def _render_next_batch(self, tab_name: str, batch_size: int = 20):
-        """Standardized batch renderer for all categories."""
-        if not hasattr(self, "_render_state"): return
-        
-        if tab_name == "Duplicates":
-            state = self._render_state["exact"]
-            scroll = self._scroll_exact
-            cards = self._exact_group_cards
-            self._do_render_groups(state, scroll, cards, batch_size, "Duplicates")
-        elif tab_name == "Similar Photos":
-            state = self._render_state["similar"]
-            scroll = self._scroll_similar
-            cards = self._similar_group_cards
-            self._do_render_groups(state, scroll, cards, batch_size, "Similar Photos")
-        elif tab_name == "Screenshots":
-            state = self._render_state["screenshots"]
-            start = state["index"]
-            end = min(start + batch_size, len(state["items"]))
-            if start < end:
-                new_paths = state["items"][start:end]
-                if start == 0:
-                    c = FileGridCard(self._scroll_screenshots, "Screenshots", new_paths, self._thumb_cache, self._update_selected_count)
-                    c.pack(fill="x", pady=4); self._screenshot_cards.append(c)
-                else:
-                    c = self._screenshot_cards[0]
-                    c.add_paths(new_paths)
-                c.load_thumbnails()
-                state["index"] = end
-            elif not state["items"] and start == 0:
-                self._show_empty(self._scroll_screenshots)
-        elif tab_name == "Blurry Photos":
-            state = self._render_state["blurry"]
-            start = state["index"]
-            end = min(start + batch_size, len(state["items"]))
-            if start < end:
-                new_paths = state["items"][start:end]
-                if start == 0:
-                    c = FileGridCard(self._scroll_blurry, "Blurry Photos", new_paths, self._thumb_cache, self._update_selected_count)
-                    c.pack(fill="x", pady=4); self._blurry_cards.append(c)
-                else:
-                    c = self._blurry_cards[0]
-                    c.add_paths(new_paths)
-                c.load_thumbnails()
-                state["index"] = end
-            elif not state["items"] and start == 0:
-                self._show_empty(self._scroll_blurry)
-        elif tab_name == "Large Files":
-            state = self._render_state["large"]
-            start = state["index"]
-            end = min(start + batch_size, len(state["items"]))
-            if start < end:
-                new_paths = state["items"][start:end]
-                if start == 0:
-                    c = FileGridCard(self._scroll_large, "Large Media (>50MB)", new_paths, self._thumb_cache, self._update_selected_count)
-                    c.pack(fill="x", pady=4); self._large_cards.append(c)
-                else:
-                    c = self._large_cards[0]
-                    c.add_paths(new_paths)
-                c.load_thumbnails()
-                state["index"] = end
-            elif not state["items"] and start == 0:
-                self._show_empty(self._scroll_large)
-        elif tab_name == "Messages Media":
-            batch_size = 80 # Override for messages
-            state = self._render_state["messages"]
-            start = state["index"]
-            end = min(start + batch_size, len(state["items"]))
-            if start < end:
-                new_paths = state["items"][start:end]
-                if start == 0:
-                    c = FileGridCard(self._scroll_messages, "Messaging Media", new_paths, self._thumb_cache, self._update_selected_count)
-                    c.pack(fill="x", pady=4); self._message_cards.append(c)
-                else:
-                    c = self._message_cards[0]
-                    c.add_paths(new_paths)
-                c.load_thumbnails()
-                state["index"] = end
-                
-                # Check if we should show a "Next Page" button
-                self._update_load_more_button("Messages Media")
-            elif not state["items"] and start == 0:
-                self._show_empty(self._scroll_messages)
-        elif tab_name == "Timeline Viewer":
-            batch_size = 80 # Override for timeline photos
-            state = self._render_state["timeline"]
-            items = state["items"] # List of (year, [paths])
-            
-            photos_loaded = 0
-            while photos_loaded < batch_size and state["year_idx"] < len(items):
-                year, paths = items[state["year_idx"]]
-                start_p = state["photo_idx"]
-                end_p = min(start_p + (batch_size - photos_loaded), len(paths))
-                
-                if start_p < end_p:
-                    batch_paths = paths[start_p:end_p]
-                    # Find or create card for this year
-                    existing_card = None
-                    for c in self._timeline_cards:
-                        if getattr(c, "_category_name", "") == f"Year {year}":
-                            existing_card = c
-                            break
-                    
-                    if existing_card:
-                        existing_card.add_paths(batch_paths)
-                        existing_card.load_thumbnails()
-                    else:
-                        c = FileGridCard(self._scroll_timeline, f"Year {year}", batch_paths, self._thumb_cache, self._update_selected_count)
-                        c.pack(fill="x", pady=8); self._timeline_cards.append(c)
-                        c.load_thumbnails()
-                    
-                    photos_loaded += (end_p - start_p)
-                    state["photo_idx"] = end_p
-                
-                # If we finished all photos in this year, move to next year
-                if state["photo_idx"] >= len(paths):
-                    state["year_idx"] += 1
-                    state["photo_idx"] = 0
-            
-            # Check for "Next Page" button
-            self._update_load_more_button("Timeline Viewer")
-            
-            if not items and state["year_idx"] == 0:
-                self._show_empty(self._scroll_timeline)
-
-    def _do_render_groups(self, state, scroll, card_list, batch_size, tab_name):
-        groups = state["groups"]
-        start = state["index"]
-        end = min(start + batch_size, len(groups))
-        
-        # Remove old load more button if exists
-        for child in scroll.winfo_children():
-            if getattr(child, "_is_load_more", False):
-                child.destroy()
-
-        for i in range(start, end):
-            g = groups[i]
-            c = DuplicateGroupCard(scroll, g, self._thumb_cache, self._update_selected_count)
-            c.pack(fill="x", pady=4); card_list.append(c)
-            c.load_thumbnails()
-        
-        state["index"] = end
-        if not groups and start == 0:
-            self._show_empty(scroll)
-
-    def _check_auto_load(self):
-        """Checks if current visible cards are too few and loads more if needed."""
-        # Get current tab
-        current_tab = None
-        for name, btn in self.nav_btns.items():
-            if btn.cget("fg_color") == "#334155": # Selected color
-                current_tab = name
-                break
-        
-        if not current_tab: return
-        
-        tab_to_cards = {
-            "Duplicates": self._exact_group_cards, "Similar Photos": self._similar_group_cards,
-            "Screenshots": self._screenshot_cards, "Messages Media": self._message_cards,
-            "Blurry Photos": self._blurry_cards, "Large Files": self._large_cards,
-            "Timeline Viewer": self._timeline_cards
+        # Populate _render_state so _update_tab_titles() doesn't crash with KeyError
+        self._render_state = {
+            "exact":       {"groups": exact_groups},
+            "similar":     {"groups": similar_groups},
+            "screenshots": {"items": detection.screenshots},
+            "blurry":      {"items": detection.blurry_photos},
+            "large":       {"items": detection.large_files},
+            "messages":    {"items": list(getattr(detection, "whatsapp_media", [])) + list(getattr(detection, "telegram_media", []))},
+            "timeline":    {"items": [p for paths in detection.timeline.values() for p in paths] if detection.timeline else []},
         }
-        
-        cards = tab_to_cards.get(current_tab, [])
-        if len(cards) < 10: # Threshold for auto-filling
-            self._render_next_batch(current_tab)
-            
-    def _update_load_more_button(self, tab_name: str):
-        """Adds a 'Next Page' button at the bottom if more items exist for a category."""
-        state_map = {
-            "Screenshots": "screenshots", "Blurry Photos": "blurry",
-            "Large Files": "large", "Messages Media": "messages",
-            "Timeline Viewer": "timeline"
-        }
-        scroll_map = {
-            "Screenshots": self._scroll_screenshots, "Blurry Photos": self._scroll_blurry,
-            "Large Files": self._scroll_large, "Messages Media": self._scroll_messages,
-            "Timeline Viewer": self._scroll_timeline
-        }
-        
-        s_key = state_map.get(tab_name)
-        if not s_key or not hasattr(self, "_render_state"): return
-        
-        state = self._render_state[s_key]
-        scroll = scroll_map.get(tab_name)
-        
-        # Remove existing button if any
-        if hasattr(self, f"_load_more_{s_key}"):
-            btn = getattr(self, f"_load_more_{s_key}")
-            if btn: btn.destroy()
-            setattr(self, f"_load_more_{s_key}", None)
-            
-        if s_key == "timeline":
-            has_more = state["year_idx"] < len(state["items"])
-        else:
-            has_more = state["index"] < len(state["items"])
 
-        if has_more:
-            # Create a container for the button to center it
-            btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-            btn_frame.pack(fill="x", pady=20)
-            
-            btn = ctk.CTkButton(
-                btn_frame, text="Next Page →", 
-                width=200, height=40, font=ctk.CTkFont(size=14, weight="bold"),
-                command=lambda n=tab_name: self._render_next_batch(n)
-            )
-            btn.pack(expand=True)
-            setattr(self, f"_load_more_{s_key}", btn_frame)
+        # Trigger thumbnail loading for all cards (deferred, avoids blocking UI)
+        self.after(200, self._check_auto_load)
 
-    def _show_toast(self, message: str, duration: int = 2500):
-        """Shows a temporary notification near the bottom."""
-        self._toast_label.configure(text=message)
-        self._toast_frame.place(relx=0.5, rely=0.9, anchor="center")
-        self.after(duration, lambda: self._toast_frame.place_forget())
+        # Store result for use by dashboard refresh
+        self._detection_result = detection
 
-    def _is_path_selected(self, path: str) -> bool:
-        """Checks if a path is selected in any visible card."""
-        all_cards = (self._exact_group_cards + self._similar_group_cards + 
-                     self._screenshot_cards + self._blurry_cards + 
-                     self._large_cards + self._message_cards + self._timeline_cards)
-        for card in all_cards:
-            if hasattr(card, "_checkboxes") and path in card._checkboxes:
-                return card._checkboxes[path].get()
-        return False
-
-    def _toggle_path_selection(self, path: str, selected: bool):
-        """Syncs selection state for a path across all cards."""
-        all_cards = (self._exact_group_cards + self._similar_group_cards + 
-                     self._screenshot_cards + self._blurry_cards + 
-                     self._large_cards + self._message_cards + self._timeline_cards)
-        for card in all_cards:
-            if hasattr(card, "_checkboxes") and path in card._checkboxes:
-                cb = card._checkboxes[path]
-                if selected: cb.select()
-                else: cb.deselect()
-        self._update_selected_count()
-
-    def _show_empty(self, parent):
-        ctk.CTkLabel(parent, text="No Files to Show", text_color=TEXT_MUTED, font=ctk.CTkFont(size=16)).pack(expand=True)
-
-    def _refresh_dashboard_stats(self):
-        """Recalculate and update dashboard summary stats based on current cards.
-        Called after deletions or when the dataset changes without a full re-scan.
-        """
-        total_images = 0
-        dup_groups = 0
-        total_waste = 0
-        extra = 0
-        for card in self._exact_group_cards + self._similar_group_cards:
-            dup_groups += 1
-            total_images += len(card.group.files)
-            total_waste += card.group.wasted_bytes()
-            extra += card.group.count - 1
-        self._stat_found.configure(text=str(total_images))
-        self._stat_dupes.configure(text=str(dup_groups))
-        self._stat_waste.configure(text=f"{total_waste / (1024*1024):.1f} MB")
-        self._stat_extra_copies.configure(text=str(extra))
-
-    def _update_global_dashboard_stats(self):
-        """Update all dashboard stats to reflect actual file counts across all categories.
-        Uses full dataset from state, not just rendered cards.
-        """
-        if not hasattr(self, "_render_state"): return
-        
-        # Exact/Similar (Groups) from full render state
-        exact_groups = self._render_state["exact"]["groups"]
-        similar_groups = self._render_state["similar"]["groups"]
-        all_groups = exact_groups + similar_groups
-        
-        dup_groups = len(all_groups)
-        total_dup_images = sum(len(g.files) for g in all_groups)
-        total_waste = sum(g.wasted_bytes() for g in all_groups)
-        extra = sum(len(g.files) - 1 for g in all_groups)
-        
-        # Categorized lists
-        screenshot_count = len(self._render_state["screenshots"]["items"])
-        blurry_count = len(self._render_state["blurry"]["items"])
-        large_count = len(self._render_state["large"]["items"])
-        message_count = len(self._render_state["messages"]["items"])
-        
-        # Update stats
-        total_scanned = getattr(self._detection_result, "total_images_checked", 0)
-        
-        self._stat_found.configure(text=str(total_scanned))
-        self._stat_unique.configure(text=str(total_scanned - extra))
-        self._stat_dupes.configure(text=str(dup_groups))
-        self._stat_waste.configure(text=f"{total_waste / (1024*1024):.1f} MB")
-        self._stat_extra_copies.configure(text=str(extra))
-
-    def _scroll_active_tab_to_top(self):
-        """Scrolls the currently visible results tab to the top."""
-        # Find active tab by checking button background
-        current_tab = None
-        for name, btn in self.nav_btns.items():
-            if btn.cget("fg_color") == "#334155": # Selected color
-                current_tab = name
-                break
-        
-        if not current_tab: return
-        
-        attr = {
-            "Duplicates": "_scroll_exact", "Similar Photos": "_scroll_similar",
-            "Screenshots": "_scroll_screenshots", "Messages Media": "_scroll_messages",
-            "Blurry Photos": "_scroll_blurry", "Large Files": "_scroll_large",
-            "Timeline Viewer": "_scroll_timeline"
-        }.get(current_tab)
-        
-        if attr:
-            scroll = getattr(self, attr)
-            if hasattr(scroll, "_parent_canvas"):
-                scroll._parent_canvas.yview_moveto(0)
+        elapsed = time.perf_counter() - self._scan_start_time
+        self._set_status(f"Scan complete in {elapsed:.1f}s — {detection.duplicate_group_count} group(s) · {waste_mb:.1f} MB reclaimable", SUCCESS)
 
     def _clear_results(self):
-        # Clear duplicate card lists
+        # Reset Dashboard Stats
+        if hasattr(self, "_stat_found"):
+            self._stat_found.configure(text="0")
+            self._stat_dupes.configure(text="0")
+            self._stat_waste.configure(text="0 MB")
+            self._stat_prefilter.configure(text="0")
+            self._stat_selected.configure(text="0")
+            self._stat_deleted_count.configure(text="0")
+            self._stat_space_saved.configure(text="0 MB")
+        
+        # Clear result lists
+        self._detection_result = None
         for w in self._scroll_exact.winfo_children(): w.destroy()
         self._exact_group_cards.clear()
         for w in self._scroll_similar.winfo_children(): w.destroy()
@@ -1114,10 +1170,10 @@ class SmartPhotoCleanerApp(ctk.CTk):
         self._stat_dupes.configure(text="0")
         self._stat_waste.configure(text="0 MB")
         self._stat_prefilter.configure(text="0")
-        self._stat_extra_copies.configure(text="0")
         self._stat_selected.configure(text="0")
+        self._stat_deleted_count.configure(text="0")
+        self._stat_space_saved.configure(text="0 MB")
         self._delete_btn.configure(state="disabled", text="Delete Selected")
-        self._compress_btn.configure(state="disabled")
         self._select_all_btn.configure(state="disabled")
         self._quick_clean_btn.configure(state="disabled")
 
@@ -1322,14 +1378,34 @@ class SmartPhotoCleanerApp(ctk.CTk):
                     "Large Files": "large", "Messages Media": "messages",
                     "Timeline Viewer": "timeline"
                 }[name]
-                st = self._render_state[state_key]
-                if "groups" in st:
-                    n_groups = len(st["groups"])
-                    n_photos = sum(len(g.files) if hasattr(g, "files") else g.count for g in st["groups"])
-                    self._tab_count_labels[name].configure(text=f"({n_groups} groups, {n_photos} photos)")
-                else:
-                    n_items = len(st["items"])
-                    self._tab_count_labels[name].configure(text=f"({n_items} items)")
+                st = self._render_state.get(state_key)
+                if st is None:
+                    continue
+                try:
+                    if "groups" in st:
+                        n_groups = len(st["groups"])
+                        n_photos = sum(len(g.files) if hasattr(g, "files") else g.count for g in st["groups"])
+                        self._tab_count_labels[name].configure(text=f"({n_groups} groups, {n_photos} photos)")
+                    else:
+                        n_items = len(st["items"])
+                        self._tab_count_labels[name].configure(text=f"({n_items} items)")
+                except Exception as exc:
+                    log.debug("_update_tab_titles error for %s: %s", name, exc)
+
+    def _build_tab_header(self, parent, title: str):
+        header = ctk.CTkFrame(parent, fg_color="transparent")
+        header.pack(fill="x", pady=(10, 0), padx=16)
+        ctk.CTkLabel(header, text=title, font=ctk.CTkFont(size=15, weight="bold"), text_color="white", anchor="w").pack(side="left")
+        ctk.CTkButton(
+            header,
+            text="?",
+            width=30,
+            height=30,
+            font=ctk.CTkFont(size=12),
+            fg_color=BG_CARD,
+            hover_color="#475569",
+            command=lambda: messagebox.showinfo(title, self._tab_descriptions.get(title, "No information available")),
+        ).pack(side="right")
 
     def _set_status(self, t, c=TEXT_MUTED): self._status_label.configure(text=t, text_color=c)
     def _set_scanning_ui(self, s):
@@ -1338,8 +1414,16 @@ class SmartPhotoCleanerApp(ctk.CTk):
         # disable per-tab scan buttons too
         for b in getattr(self, '_tab_scan_buttons', []):
             b.configure(state=st)
-        self._pause_btn.configure(state="normal" if s else "disabled")
+        # _pause_btn is optional - only configure if it exists
+        pause_btn = self.__dict__.get('_pause_btn')
+        if pause_btn is not None:
+            try:
+                pause_btn.configure(state="normal" if s else "disabled")
+            except Exception:
+                pass
         self._cancel_btn.configure(state="normal" if s else "disabled")
+        if self.__dict__.get('_refresh_btn') is not None:
+            self._refresh_btn.configure(state="disabled" if s else "normal")
 
     def _push_done(self, r):
         if r:
@@ -1373,6 +1457,9 @@ class SmartPhotoCleanerApp(ctk.CTk):
         label = "(Exact only)" if val == 0 else f"(~{val * 4}% diff allowed)"
         self._tol_label.configure(text=f"{val}  {label}")
         self._sync_settings()
+        # Trigger instant re-detection for slider
+        if hasattr(self, "_last_h_map") and self._last_h_map:
+             self._start_scan("similar", force_rescan=False)
 
     def _sync_settings(self):
         self._settings.use_prefilter = self._prefilter_var.get()
@@ -1389,9 +1476,9 @@ class SmartPhotoCleanerApp(ctk.CTk):
         self._update_selected_count()
         t = sum(len(c.get_selected_paths()) for c in self._exact_group_cards + self._similar_group_cards)
         if t == 0:
-            messagebox.showinfo("Quick Clean", "No duplicate copies to remove.")
+            messagebox.showinfo("Delete All Duplicates", "No duplicate copies found to delete.")
             return
-        if messagebox.askyesno("Quick Clean", f"Ready to move {t} duplicate copies to the Recycle Bin. Proceed?"):
+        if messagebox.askyesno("Confirm Mass Delete", f"Ready to move {t} duplicate copies (leaving the best original version of each) to the Recycle Bin. Proceed?"):
             # Call delete logic directly to avoid the second confirmation dialog
             paths = []
             all_card_lists = [self._exact_group_cards, self._similar_group_cards]
@@ -1411,7 +1498,7 @@ class SmartPhotoCleanerApp(ctk.CTk):
                 for c in to_remove:
                     c.destroy(); clist.remove(c)
             
-            # Sync session stats for Quick Clean too
+            # Sync session stats for Mass Delete too
             quick_bytes_saved = sum(path_size_map.get(p, 0) for p in res.deleted)
             
             self._session_deleted_count += len(res.deleted)
@@ -1425,13 +1512,13 @@ class SmartPhotoCleanerApp(ctk.CTk):
             self._update_global_dashboard_stats()
             self._update_tab_titles() # NEW: Sync titles
             
-            # IMPORTANT: Auto-load more after Quick Clean
+            # IMPORTANT: Auto-load more after Mass Delete
             self._check_auto_load()
             
             # Scroll to top
             self._scroll_active_tab_to_top()
             
-            self._show_toast(f"Quick Clean: Moved {len(res.deleted)} file(s)")
+            self._show_toast(f"Mass Delete: Moved {len(res.deleted)} duplicate file(s) to Recycle Bin")
             if has_undoable_deletes(): self._undo_btn.pack(side="right", padx=10)
 
     def _compressor_select_folder(self):
@@ -1542,6 +1629,85 @@ class SmartPhotoCleanerApp(ctk.CTk):
                 line = f"  ✘  {os.path.basename(r.original_path)}: {r.error}"
                 col = DANGER
             ctk.CTkLabel(self._compress_output, text=line, text_color=col, font=ctk.CTkFont(size=11), anchor="w").pack(fill="x", padx=12)
+
+    # ── Missing utility methods ─────────────────────────────────────────────
+
+    def _show_toast(self, message: str, duration_ms: int = 3000):
+        """Show a floating toast notification at the bottom of the screen."""
+        try:
+            self._toast_label.configure(text=f"  {message}  ")
+            self._toast_frame.place(relx=0.5, rely=0.93, anchor="center")
+            self.after(duration_ms, self._hide_toast)
+        except Exception:
+            pass
+
+    def _hide_toast(self):
+        try:
+            self._toast_frame.place_forget()
+        except Exception:
+            pass
+
+    def _refresh_dashboard_stats(self):
+        """Re-compute dashboard stat cards from current detection result."""
+        if not hasattr(self, "_detection_result") or self._detection_result is None:
+            return
+        det = self._detection_result
+        try:
+            self._stat_found.configure(text=f"{det.total_images_checked:,}")
+            saved = det.prefilter_exact_count
+            self._stat_prefilter.configure(text=f"{saved:,}" if saved > 0 else "—")
+            remaining_groups = [g for g in det.groups if len(g.files) >= 2]
+            self._stat_dupes.configure(text=str(len(remaining_groups)))
+            waste_mb = sum(g.wasted_bytes() for g in remaining_groups) / (1024 * 1024)
+            self._stat_waste.configure(text=f"{waste_mb:.1f} MB")
+        except Exception as exc:
+            log.debug("_refresh_dashboard_stats error: %s", exc)
+
+    def _update_global_dashboard_stats(self):
+        """Sync session-level stats (deleted count + space saved) to dashboard cards."""
+        try:
+            self._stat_deleted_count.configure(text=str(self._session_deleted_count))
+            self._stat_space_saved.configure(text=f"{self._session_saved_bytes / (1024 * 1024):.1f} MB")
+        except Exception as exc:
+            log.debug("_update_global_dashboard_stats error: %s", exc)
+
+    def _check_auto_load(self):
+        """After deletion, re-trigger thumbnail loading for remaining cards."""
+        all_card_lists = [
+            self._exact_group_cards, self._similar_group_cards,
+            self._screenshot_cards, self._blurry_cards,
+            self._large_cards, self._message_cards, self._timeline_cards
+        ]
+        for clist in all_card_lists:
+            for card in clist:
+                if hasattr(card, "load_thumbnails"):
+                    try:
+                        card.load_thumbnails()
+                    except Exception:
+                        pass
+
+    def _scroll_active_tab_to_top(self):
+        """Scroll the currently active tab's scroll frame back to the top."""
+        try:
+            scroll_map = {
+                "Duplicates": self._scroll_exact,
+                "Similar Photos": self._scroll_similar,
+                "Screenshots": self._scroll_screenshots,
+                "Blurry Photos": self._scroll_blurry,
+                "Large Files": self._scroll_large,
+                "Messages Media": self._scroll_messages,
+                "Timeline Viewer": self._scroll_timeline,
+            }
+            for name, frame in self.frames.items():
+                try:
+                    if frame.winfo_ismapped() and name in scroll_map:
+                        scroll_map[name]._parent_canvas.yview_moveto(0)
+                        break
+                except Exception:
+                    pass
+        except Exception as exc:
+            log.debug("_scroll_active_tab_to_top error: %s", exc)
+
 
 def launch():
     log = logging.getLogger("ui.launch")

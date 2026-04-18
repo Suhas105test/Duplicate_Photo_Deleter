@@ -2,7 +2,7 @@ import os
 import subprocess
 import logging
 import re
-from typing import Optional, List, Callable
+from typing import Optional, Callable
 from dataclasses import dataclass
 from pathlib import Path
 

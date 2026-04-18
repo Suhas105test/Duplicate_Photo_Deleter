@@ -1,29 +1,42 @@
 # Smart Photo Cleaner
 
-A smart desktop application to scan directories and detect duplicate or similar photos.
+Smart Photo Cleaner is a desktop utility for Windows that helps you reclaim disk space by finding duplicate and similar photos, screenshots, blurry images, large media files, and chat media.
 
-**New features:**
+## Key Features
 
-- Elapsed time and scanning speed indicators during scans
-- Pause/resume and cancel controls for long-running operations
-- Per-tab scan buttons with cached results to avoid unnecessary rescanning
-- Dashboard statistics automatically stay in sync after deletions
-- Improved stability for very large scans, and heatmap feature removed
-- **Media Compression**: Real-time progress bar when compressing large videos
-- **Bulk Deletion**: Optimized deletion logic for near-instant removal of thousands of files
-- **UI & Theme**: Adaptive light mode support and empty state highlight fixes
-- **Robustness**: Pinned dependencies and improved thread safety for file operations
+- Multi-folder and file-level scanning: select folders or individual media files.
+- Detailed scan progress with percentage, files scanned, elapsed time, and current action.
+- Responsive scan start behavior for selected folders and files, including clear progress text.
+- Scrollable dashboard layout for full visibility of all components.
+- Exact duplicate detection for byte-identical files.
+- Similar photo grouping using perceptual hashing with adjustable Hamming tolerance.
+- Screenshot discovery to remove clutter from mobile captures.
+- Blurry photo detection for removing low-quality shots.
+- Large file analysis for videos, RAW files, and oversized images.
+- Messages media scanning for WhatsApp and Telegram media items.
+- Timeline viewer to browse media by year.
+- Media compression for images and videos with JPEG quality and CRF controls.
+- Safe deletion flow with recycle bin support and session stats.
+- Dark/light theme support and per-tab guidance.
 
-## Installation
+## How to Use
 
 1. Create a virtual environment and install dependencies:
-```bash
+```powershell
 python -m venv venv
-venv\Scripts\activate  # On Windows
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-2. Run the application
-```bash
+2. Run the application:
+```powershell
 python src/main.py
 ```
+
+3. Use the Dashboard to add folders or select individual files, then scan for duplicates or media categories.
+4. Switch between tabs to explore exact duplicates, similar photos, screenshots, blurry shots, large files, message media, and timeline results.
+5. Use the Media Compressor tab to shrink images and videos.
+
+## Documentation
+
+- `feature.md` contains a complete list of application features and behavior.

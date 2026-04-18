@@ -70,6 +70,13 @@ class ImageViewer(ctk.CTkToplevel):
         )
         self.del_btn.pack(side="right", padx=4, pady=10)
 
+        self.open_ext_btn = ctk.CTkButton(
+            self.top, text="⧉ Open Externally", width=130, height=32,
+            fg_color="#334155", hover_color="#475569", font=ctk.CTkFont(weight="bold"),
+            command=self._open_externally
+        )
+        self.open_ext_btn.pack(side="right", padx=4, pady=10)
+
         # Center/Leftish: Path label (flexible)
         self.path_label = ctk.CTkLabel(self.top, text="", font=ctk.CTkFont(size=11),
                                        text_color=TEXT_MUTED, anchor="w")
@@ -184,6 +191,22 @@ class ImageViewer(ctk.CTkToplevel):
                                          text_color=TEXT_MUTED)
             except Exception:
                 pass # Window might be closing
+
+    def _open_externally(self):
+        if not self.paths:
+            return
+        path = self.paths[self.index]
+        import platform
+        import subprocess
+        try:
+            if platform.system() == 'Windows':
+                os.startfile(path)
+            elif platform.system() == 'Darwin':
+                subprocess.call(('open', path))
+            else:
+                subprocess.call(('xdg-open', path))
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open file: {e}")
 
     def _prev(self):
         if not self.paths:

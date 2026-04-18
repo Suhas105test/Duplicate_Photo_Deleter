@@ -18,7 +18,6 @@ v3 fixes:
 import logging
 import os
 from collections import defaultdict
-from pathlib import Path
 from typing import Generator
 
 log = logging.getLogger(__name__)
@@ -225,9 +224,10 @@ def _process_entry(entry: os.DirEntry, result: ScanResult, progress_callback=Non
             filename=entry.name,
             timestamp=mtime,
         ))
-        result._invalidate_cache()
+        # NOTE: _invalidate_cache() is NOT called here; invalidate once after
+        # the entire walk to avoid O(n) cache thrashing.
         result.total_size_bytes += size
-        
+
         # Accumulate folder heatmap
         folder_dir = os.path.dirname(entry.path)
         result.folder_sizes[folder_dir] += size
@@ -272,7 +272,6 @@ def scan_files(
                 filename=os.path.basename(file_path),
                 timestamp=stat.st_mtime,
             ))
-            result._invalidate_cache()
             result.total_size_bytes += size
             result.folder_sizes[os.path.dirname(file_path)] += size
             if progress_callback:
@@ -280,6 +279,8 @@ def scan_files(
         except OSError:
             result.skipped_files += 1
 
+    # Invalidate cache once after all files processed
+    result._invalidate_cache()
     log.info("scan_files complete: %d images from %d paths", result.image_count, len(file_paths))
     return result
 
@@ -307,8 +308,53 @@ def scan_folder(
             break
         _process_entry(entry, result, progress_callback)
 
+    # Invalidate the size-groups cache once after the full walk
+    result._invalidate_cache()
+
     log.info(
         "scan_folder complete: %d images, %d skipped, %d errors, %.1f MB",
         result.image_count, result.skipped_files, len(result.errors), result.total_size_mb(),
     )
     return result
+
+
+def scan_folders(
+    folder_paths: list[str],
+    progress_callback=None,
+    recursive: bool = True,
+    cancel_event=None,
+) -> ScanResult:
+    """
+    Scan multiple directories and merge all results into a single ScanResult.
+
+    Duplicate paths across folders are handled naturally — the same physical
+    file will be hashed once in the downstream stage since paths are unique.
+    """
+    merged = ScanResult()
+
+    for folder_path in folder_paths:
+        if cancel_event and cancel_event.is_set():
+            break
+
+        if not os.path.isdir(folder_path):
+            msg = f"Not a valid directory: {folder_path}"
+            log.error(msg)
+            merged.errors.append(msg)
+            continue
+
+        walker = _walk_directory_recursive(folder_path) if recursive else _walk_directory_flat(folder_path)
+
+        for entry in walker:
+            if cancel_event and cancel_event.is_set():
+                break
+            _process_entry(entry, merged, progress_callback)
+
+    # Invalidate cache once after all folders processed
+    merged._invalidate_cache()
+
+    log.info(
+        "scan_folders complete: %d folders, %d images, %d skipped, %d errors, %.1f MB",
+        len(folder_paths), merged.image_count, merged.skipped_files,
+        len(merged.errors), merged.total_size_mb(),
+    )
+    return merged

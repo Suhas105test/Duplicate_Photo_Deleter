@@ -464,12 +464,14 @@ def _exact_byte_groups_to_duplicate_groups(
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def detect_duplicates(
-    hash_map: dict[str, dict],
-    hash_tolerance: int = 0,
-    exact_byte_dupes: Optional[list[list[str]]] = None,
-    folder_sizes: Optional[dict[str, int]] = None,
-    all_images: Optional[list[ScanFile]] = None,
+    hash_map: dict[str, dict], 
+    hash_tolerance: int = 2, 
+    exact_byte_dupes: list[list[str]] = None, 
+    all_images: list = None, 
+    folder_sizes: dict[str, int] = None, 
     mode: str = "full",
+    do_metadata: bool = True,
+    do_duplicates: bool = True
 ) -> DetectionResult:
     """
     Group images by identical or similar perceptual hashes.
